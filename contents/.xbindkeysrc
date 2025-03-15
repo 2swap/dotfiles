@@ -1,6 +1,0 @@
-"cd /media/swap/primary/immersion-tools/watcher; python3 /media/swap/primary/immersion-tools/watcher/watcher.py -ls"
-  Control+Shift+Alt + l
-"notify-send test"
-  Control+Shift+Alt + t
-"notify-send 'setting up drawpad' && xinput map-to-output 'HID 256c:006d Pen Pen (0)' 'HDMI-0'"
-  Control+Shift+Alt + h

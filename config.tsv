@@ -1,5 +1,4 @@
-contents/.xbindkeysrc	/home/swap/.xbindkeysrc
-contents/.bashrc	/home/swap/.bashrc
-contents/.vimrc	/home/swap/.vimrc
-contents/startup_script.sh	/home/swap/.config/autostart/startup_script.sh
-
+contents/.bashrc	/home/2swap/.bashrc
+contents/vimrc	/etc/vimrc
+contents/gpt.py	/home/2swap/gpt.py
+contents/teach.py	/home/2swap/teach.py
