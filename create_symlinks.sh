@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Check if the script is being run with root privileges
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run this script with sudo."
+    exit 1
+fi
+
 CONFIG_FILE="config.tsv"
 
 # Display a warning message
