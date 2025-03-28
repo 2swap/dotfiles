@@ -35,7 +35,7 @@ def main():
     
     try:
         completion = openai.chat.completions.create(
-            model="o3-mini",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful code assistant. The user will provide a file of code and a suggested change, and your job is to make a minimal edit implementing that change. Do not change unrelated parts of the file. Avoid commentary, only responding with the updated code."},
                 {"role": "user", "content": file_content},

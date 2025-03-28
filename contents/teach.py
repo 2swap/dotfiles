@@ -31,7 +31,7 @@ def main():
     
     try:
         completion = openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": f"You are a helpful assistant that generates flashcards. "
                                                "Provide the flashcards as a JSON object where each key is a question and each value is the answer. "
