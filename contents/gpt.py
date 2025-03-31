@@ -31,6 +31,10 @@ def main():
     while True:
         try:
             user_input = input(f"{RED}> {RESET}").strip()
+            if len(user_input) < 5:
+                conversation_history = []
+                print(f"{GREEN}Wiped chat history.{RESET}\n")
+                continue
             
             # Append user input to conversation history
             conversation_history.append({"role": "user", "content": user_input})

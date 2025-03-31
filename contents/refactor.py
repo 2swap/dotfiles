@@ -35,7 +35,8 @@ def main():
     
     try:
         completion = openai.chat.completions.create(
-            model="gpt-4o-mini",
+            model="o3-mini",
+            #model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful code assistant. The user will provide a file of code and a suggested change, and your job is to make a minimal edit implementing that change. Do not change unrelated parts of the file. Avoid commentary, only responding with the updated code."},
                 {"role": "user", "content": file_content},
@@ -45,15 +46,15 @@ def main():
 
         response = completion.choices[0].message.content.strip()
         input_path = Path(input_file)
-        output_file = input_path.parent / (input_path.stem + ".edited" + input_path.suffix)
-        with open(output_file, 'w') as f:
+        backup_file = input_path.with_name(input_path.name + ".old")
+        input_path.rename(backup_file)
+        with open(input_file, 'w') as f:
             f.write(response)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
 
-    subprocess.run(["meld", input_file, str(output_file)])
+    subprocess.run(["meld", str(backup_file), input_file])
 
 if __name__ == '__main__':
     main()
-

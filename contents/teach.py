@@ -34,13 +34,11 @@ def main():
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": f"You are a helpful assistant that generates flashcards. "
-                                               "Provide the flashcards as a JSON object where each key is a question and each value is the answer. "
-                                               "Do not include any additional text or formatting. "
-                                               "Questions should stick to the core technical details of a subject, and avoid non-technical trivia. "
-                                               "Answer fields should be as brief as possible, favoring single words or lists over english sentences. Questions should have one unambiguously correct answer. "
-                                               "Questions should construct an overall story or convey a coherent perspective. "
-                                               "Use examples when appropriate. "
-                                               "For foreign names, places, or concepts, include foreign language text as well as romanized text wherever possible. "},
+                                               "Provide a JSON object where each key is a question and each value is the answer, without any additional text or formatting. "
+                                               "Stick to the core technical details of a subject, and avoid non-technical trivia. "
+                                               "There should be one unambiguously correct answer- avoid open-ended questions such as 'What are some examples of Carnivora'."
+                                               "Ask questions redundantly or bidirectionally- two cards such as 'What occurs during prometaphase?' and 'What stage involves spindle attachment?' are helpful. "
+                                               "For foreign names, places, or concepts, always include foreign language text as well as romanized text. "},
                 {"role": "user", "content": prompt}
             ],
         )
