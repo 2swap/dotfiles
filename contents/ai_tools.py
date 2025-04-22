@@ -12,6 +12,23 @@ import re
 import argparse
 from gtts import gTTS
 
+def anki_connect(action, params={}):
+    try:
+        if params is None:
+            params = []
+        request = json.dumps({"action": action, "version": 6, "params": params})
+        response = requests.post("http://localhost:8765", data=request)
+        return response.json()
+    except requests.ConnectionError:
+        print("AnkiConnect is not running. Please turn it on.")
+        exit(1)
+
+def check_deck_exists(deck_name):
+    decks = anki_connect("deckNames")["result"]
+    if not (deck_name in decks):
+        anki_connect("createDeck", {"deck": deck_name})
+        print(f"Deck '{deck_name}' created.")
+
 def read_file(input_file):
     print(f"Reading file {input_file}")
     try:
@@ -22,26 +39,26 @@ def read_file(input_file):
         print(f"Error reading input file: {e}")
         sys.exit(1)
 
-def send_to_anki(notes):
-    payload = {
-        "action": "addNotes",
-        "version": 6,
-        "params": {
-            "notes": notes
-        }
+def make_note(deck, front, back, front_sound, back_sound):
+    return {
+        "deckName": deck,
+        "modelName": "BasicWithTTS",
+        "fields": {
+            "Front": front,
+            "Back": back,
+            "FrontTTS": "[sound:"+front_sound+"]",
+            "BackTTS": "[sound:"+back_sound+"]",
+        },
+        "options": {
+            "allowDuplicate": True
+        },
+        "tags": []
     }
 
-    print("Sending to anki...")
-    # Send the flashcards to AnkiConnect.
-    anki_url = "http://localhost:8765"
-    try:
-        anki_resp = requests.post(anki_url, json=payload)
-        result = anki_resp.json()
-        print("AnkiConnect response:")
-        print(json.dumps(result, indent=2))
-    except Exception as e:
-        print("Error sending request to AnkiConnect:", e)
-        sys.exit(1)
+def anki_add_notes(notes):
+    resp_json = anki_connect("addNotes", { "notes": notes } )
+    print("AnkiConnect response:")
+    print(json.dumps(resp_json, indent=2))
 
 def parse_json(raw):
     json_match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -121,17 +138,6 @@ def get_azure_token():
         response = requests.post(fetch_token_url, headers=headers)
         azure_token = str(response.text)
     return azure_token
-azure_token = 0 # Cache the token
-def get_azure_token():
-    global azure_token
-    if azure_token == 0:
-        fetch_token_url = 'https://eastus.api.cognitive.microsoft.com/sts/v1.0/issueToken'
-        headers = {
-            'Ocp-Apim-Subscription-Key': get_azure_key()
-        }
-        response = requests.post(fetch_token_url, headers=headers)
-        azure_token = str(response.text)
-    return azure_token
 
 def azure_tts(text, path, language):
     import random
@@ -164,6 +170,7 @@ def azure_tts(text, path, language):
         "turkish": "tr",
         "japanese": "ja",
         "chinese": "zh",
+        "mandarin": "zh",
         "filipino": "fil",
         "tagalog": "fil"
     }
@@ -291,10 +298,9 @@ RESET = "\033[0m"
 
 def chat():
     conversation_history = [{"role": "system", "content": (
-                "You are a helpful assistant involved in a continuous conversation. You can also execute shell commands on "
-                "the host machine. When you decide to execute a shell command, output a line starting with 'SHELL:' followed "
-                "by the command to execute. The command will be executed and its stdout and stderr will be provided back to you "
-                "in the conversation context.")}]
+        "You are a helpful assistant. If needed, you can execute shell commands on the host machine. "
+        "When you decide to execute a shell command, output a line starting with 'SHELL:' followed by the command to execute. "
+        "The command will be executed and its stdout and stderr will be provided back to you in the conversation context.")}]
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
@@ -328,7 +334,9 @@ def rw():
 
     input_file = sys.argv[1]
     messages=[
-        {"role": "system", "content": "You are a helpful code assistant. The user will provide a file of code and a suggested change, and your job is to make a minimal edit implementing that change. Avoid commentary, only responding with the updated file or part of the file."},
+        {"role": "system", "content": (
+            "You are a helpful code assistant. The user will provide a file of code and a suggested change, "
+            "and your job is to make a minimal edit implementing that change. Avoid commentary, only responding with the updated file or part of the file.")},
         {"role": "user", "content": read_file(input_file)},
         {"role": "user", "content": input(f"{RED}> {RESET}").strip()}
     ]
@@ -350,22 +358,20 @@ def rw():
 
 def teach():
     parser = argparse.ArgumentParser(description="Teach flashcards with TTS reading support.")
-    parser.add_argument("subject", help="Subject for flashcards")
+    parser.add_argument("subject", nargs="+", help="Subject for flashcards")
     parser.add_argument("--lang", default="Spanish", help="Language for TTS reading")
     parser.add_argument("--tts", choices=["openai", "gtts", "azure"], default="azure",
                         help="Specify whether to use 'openai', 'gtts' or 'azure' for text-to-speech output.")
     args = parser.parse_args()
     subject = " ".join(args.subject).strip()
+    lang = args.lang
+    check_deck_exists(lang)
 
     messages=[
         {"role": "system", "content": f"You are a helpful assistant that generates flashcards. "
                                        "Provide a JSON object where each key is a question and each value is the answer, without any additional text or formatting. "
-                                       "Stick to the core technical details of a subject, and avoid non-technical trivia. " 
-                                       "Ask questions redundantly or bidirectionally- two cards such as 'What occurs during prometaphase?' and 'What stage involves spindle attachment?' are helpful. "
-                                       "Include lots of examples. "
-                                       "Feature brevity over complete sentences in the answer field. "
-                                       "For foreign names, places, or concepts, always include foreign language text as well as romanized text. "},
-        {"role": "user", "content": f"Generate a few flashcards in {args.lang} about: {subject}."}
+                                       "Aim for brevity in the answer field. "},
+        {"role": "user", "content": f"Generate flashcards in {lang} about: {subject}."}
     ]
     flashcards = parse_json(query_agent("gpt-4o-mini", messages))
     
@@ -373,26 +379,12 @@ def teach():
     notes = []
     for question, answer in flashcards.items():
         print(question+"\t"+answer)
-        front_audio_filename = tts_to_anki_media(args.tts, question, args.lang)
-        back_audio_filename = tts_to_anki_media(args.tts, answer, args.lang)
-
-        note = {
-            "deckName": "Understanding",
-            "modelName": "BasicWithTTS",
-            "fields": {
-                "Front": question,
-                "Back": answer,
-                "FrontTTS": "[sound:"+front_audio_filename+"]",
-                "BackTTS": "[sound:"+back_audio_filename+"]"
-            },
-            "options": {
-                "allowDuplicate": True
-            },
-            "tags": []
-        }
+        front_audio_filename = tts_to_anki_media(args.tts, question, lang)
+        back_audio_filename = tts_to_anki_media(args.tts, answer, lang)
+        note = make_note(lang.capitalize(), question, answer, front_audio_filename, back_audio_filename)
         notes.append(note)
     
-    send_to_anki(notes)
+    anki_add_notes(notes)
 
 def vocab():
     parser = argparse.ArgumentParser(description="Generate flashcards with TTS audio.")
@@ -401,14 +393,14 @@ def vocab():
     parser.add_argument("--tts", choices=["openai", "gtts", "azure"], default="azure",
                         help="Specify whether to use 'openai', 'gtts' or 'azure' for text-to-speech output.")
     args = parser.parse_args()
-
-    language = args.language.strip()
+    language = args.language.strip().capitalize()
+    check_deck_exists(language)
     foreign_word = " ".join(args.foreign_word).strip()
 
     messages=[
         {"role": "system", "content": (
             "You are a helpful assistant that generates flashcards. Provide the flashcards as a JSON object "
-            "where each key is a 4-8 word sentence (in the foreign language) and each value is the corresponding Spanish translation. "
+            "where each key is a 3-7 word sentence (in the foreign language) and each value is the corresponding Spanish translation. "
             "Ensure the sentences are natural and diverse. "
             "Even if the user types a romanized word, produce the target-language sentence in the native writing system. "
             "Do not include any extra commentary or formatting. "
@@ -416,11 +408,8 @@ def vocab():
         #{"role": "user", "content": f"Here is a list of {language} words: '{foreign_word}'. Generate 3 sentences for each word in the list."}
         {"role": "user", "content": f"Aquí tengo una lista de palabras en {language}: '{foreign_word}'. Genera 3 oraciones por cada palabra de la lista."}
     ]
-
     raw_response = query_agent("gpt-4o-mini", messages)
-
     sentences_dict = parse_json(raw_response)
-
     notes = []
 
     # Process each sentence and its translation.
@@ -429,23 +418,10 @@ def vocab():
         front_audio_filename = tts_to_anki_media(args.tts, sentence, language)
         back_audio_filename = tts_to_anki_media(args.tts, translation, "Spanish")
 
-        note = {
-            "deckName": language.capitalize(),
-            "modelName": "BasicWithTTS",
-            "fields": {
-                "Front": sentence,
-                "Back": translation,
-                "FrontTTS": "[sound:"+front_audio_filename+"]",
-                "BackTTS": "[sound:"+back_audio_filename+"]",
-            },
-            "options": {
-                "allowDuplicate": True
-            },
-            "tags": []
-        }
+        note = make_note(language, sentence, translation, front_audio_filename, back_audio_filename)
         notes.append(note)
 
-    send_to_anki(notes)
+    anki_add_notes(notes)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point: rw, teach, chat, vocab")
