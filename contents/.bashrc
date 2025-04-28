@@ -11,6 +11,7 @@ PS1='[\u@\h \W]\$ '
 alias chat='~/dotfiles/contents/ai_tools.py chat'
 alias teach='~/dotfiles/contents/ai_tools.py teach'
 alias indo='~/dotfiles/contents/ai_tools.py vocab Indonesian'
+alias vocab='~/dotfiles/contents/ai_tools.py vocab'
 alias tur='~/dotfiles/contents/ai_tools.py vocab Turkish'
 alias rw='~/dotfiles/contents/ai_tools.py rw'
 alias au='~/dotfiles/contents/toggle_audio.sh'
@@ -19,3 +20,4 @@ alias listen='cd /run/media/2swap/primary/immersion-tools/watcher && ./watcher.p
 alias watch='cd /run/media/2swap/primary/immersion-tools/watcher && ./watcher.py'
 alias huion='xinput map-to-output "HID 256c:006d Pen Pen (0)" "HDMI-0"'
 neofetch
+export PYTHONHISTFILE=/dev/null

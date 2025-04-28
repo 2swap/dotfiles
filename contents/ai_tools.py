@@ -10,6 +10,7 @@ import json
 import requests
 import re
 import argparse
+from pprint import pprint
 from gtts import gTTS
 
 def anki_connect(action, params={}):
@@ -143,7 +144,7 @@ def azure_tts(text, path, language):
     import random
     # Voice dictionary mapping language keys to available voices.
     voice_dict = {
-        "de": ["de-DE-Florian:DragonHDLatestNeural", "de-DE-Seraphina:DragonHDLatestNeural"],
+        "de": ["de-DE-Florian:DragonHDLatestNeural", "de-DE-Seraphina:DragonHDLatestNeural", "de-DE-GiselaNeural"],
         "hi": ["hi-IN-AaravNeural", "hi-IN-AnanyaNeural", "hi-IN-AartiNeural", "hi-IN-ArjunNeural",
                "hi-IN-KavyaNeural", "hi-IN-KunalNeural", "hi-IN-RehaanNeural", "hi-IN-SwaraNeural", "hi-IN-MadhurNeural"],
         "es": ["es-MX-DaliaNeural", "es-MX-JorgeNeural", "es-MX-BeatrizNeural", "es-MX-CandelaNeural",
@@ -155,11 +156,10 @@ def azure_tts(text, path, language):
         "ja": ["ja-JP-Masaru:DragonHDLatestNeural", "ja-JP-Nanami:DragonHDLatestNeural"],
         "zh": ["zh-CN-Xiaochen:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", 
                "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural", "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
-               "zh-CN-Yunyi:DragonHDFlashLatestNeural", "zh-CN-Xiaochen:DragonHDLatestNeural", "zh-CN-Yunfan:DragonHDLatestNeural"],
-        "fil": ["fil-PH-BlessicaNeural", "fil-PH-AngeloNeural"]
+               "zh-CN-Yunyi:DragonHDFlashLatestNeural", "zh-CN-Xiaochen:DragonHDLatestNeural", "zh-CN-Yunfan:DragonHDLatestNeural", "zh-CN-XiaoshuangNeural", "zh-CN-XiaoyouNeural"],
+        "fil": ["fil-PH-BlessicaNeural", "fil-PH-AngeloNeural"],
+        "fr": ["fr-FR-EloiseNeural", "fr-FR-Remy:DragonHDLatestNeural", "fr-FR-Vivienne:DragonHDLatestNeural"]
     }
-    # Default English voice if language not matched.
-    english_voice = "en-US-AriaNeural"
 
     # Map input language to a key.
     lang_map = {
@@ -172,7 +172,8 @@ def azure_tts(text, path, language):
         "chinese": "zh",
         "mandarin": "zh",
         "filipino": "fil",
-        "tagalog": "fil"
+        "tagalog": "fil",
+        "french": "fr"
     }
     key = lang_map.get(language.lower(), "en")
 
@@ -180,14 +181,15 @@ def azure_tts(text, path, language):
     if key in voice_dict:
         voice = random.choice(voice_dict[key])
     else:
-        voice = english_voice
+        print("Azure language not supported!")
+        exit(1)
 
     voice_name = voice
 
-    # Build the SSML.
+    sanitized_text = re.sub(r'[&<>"\']', ' ', re.sub(r'\s+', ' ', text))
     ssml = f"""<speak version='1.0' xml:lang='en-US'>
   <voice name='{voice_name}'>
-    {text}
+    {sanitized_text}
   </voice>
 </speak>"""
 
@@ -195,7 +197,7 @@ def azure_tts(text, path, language):
     headers = {
         "Authorization": "Bearer " + get_azure_token(),
         "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+        "X-Microsoft-OutputFormat": "audio-48khz-192kbitrate-mono-mp3",
         "User-Agent": "azureTTS"
     }
     response = requests.post(tts_url, headers=headers, data=ssml.encode('utf-8'))
@@ -228,7 +230,7 @@ def ask_for_confirmation(query):
 def run_shell_command(command):
     if not ask_for_confirmation(f"Do you want to run the following command? {GREEN}{command}"):
         print("Command execution cancelled.")
-        return "Command was not approved by user.", ""
+        return "Command was not approved by user.", "", False
 
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True, bufsize=1)
     stdout_lines = []
@@ -247,7 +249,7 @@ def run_shell_command(command):
     process.wait()
     t1.join()
     t2.join()
-    return "".join(stdout_lines), "".join(stderr_lines)
+    return "".join(stdout_lines), "".join(stderr_lines), True
 
 def get_gtts_lang(language):
     mapping = {
@@ -270,7 +272,7 @@ def get_gtts_lang(language):
 
 def tts_to_anki_media(service, text, language):
     # Remove non-word characters and replace spaces with underscores.
-    audio_filename = re.sub(r'\W+', '_', text).strip('_') + ".mp3"
+    audio_filename = re.sub(r'[^a-zA-Z0-9]', '_s', text).strip('_') + ".mp3"
     # Construct the full file path in the media directory.
     audio_filepath = os.path.join(os.path.expanduser("~/anki_media"), audio_filename)
     if service == "gtts":
@@ -299,8 +301,7 @@ RESET = "\033[0m"
 def chat():
     conversation_history = [{"role": "system", "content": (
         "You are a helpful assistant. If needed, you can execute shell commands on the host machine. "
-        "When you decide to execute a shell command, output a line starting with 'SHELL:' followed by the command to execute. "
-        "The command will be executed and its stdout and stderr will be provided back to you in the conversation context.")}]
+        "You may output a line such as 'SHELL: `ls ~`' and the output will be provided.")}]
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
@@ -317,12 +318,12 @@ def chat():
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
             for line in response.splitlines():
-                if line.startswith("SHELL:"):
-                    command = line[len("SHELL:"):].strip()
-                    stdout, stderr = run_shell_command(command)
+                match = re.search(r'^SHELL: `([^`]*)`$', line)
+                if match:
+                    command = match.group(1)
+                    stdout, stderr, line_had_shell = run_shell_command(command)
                     result_message = f"STDOUT: {stdout}\nSTDERR: {stderr}"
                     conversation_history.append({"role": "system", "content": result_message})
-                    line_had_shell = True
                     break
             if not line_had_shell:
                 break
@@ -374,6 +375,10 @@ def teach():
         {"role": "user", "content": f"Generate flashcards in {lang} about: {subject}."}
     ]
     flashcards = parse_json(query_agent("gpt-4o-mini", messages))
+
+    pprint(flashcards)
+    if not ask_for_confirmation(f"Continue?"):
+        exit(1)
     
     # Build the list of note payloads for AnkiConnect.
     notes = []
@@ -399,17 +404,18 @@ def vocab():
 
     messages=[
         {"role": "system", "content": (
-            "You are a helpful assistant that generates flashcards. Provide the flashcards as a JSON object "
-            "where each key is a 3-7 word sentence (in the foreign language) and each value is the corresponding Spanish translation. "
-            "Ensure the sentences are natural and diverse. "
-            "Even if the user types a romanized word, produce the target-language sentence in the native writing system. "
-            "Do not include any extra commentary or formatting. "
+            f"Eres un asistente útil que genera tarjetas didácticas. Proporciona las tarjetas como un objeto JSON "
+            "donde cada clave sea una oración de 3 a 7 palabras y cada valor sea la traducción correspondiente al español. Evita formato adicional o comentarios. "
+            "Por ejemplo, si el usuario proporciona la palabra indonesia kompas, podrías incluir: 'Barat Daya adalah posisi kompas': 'Suroeste es una posición en la brújula' "
         )},
-        #{"role": "user", "content": f"Here is a list of {language} words: '{foreign_word}'. Generate 3 sentences for each word in the list."}
-        {"role": "user", "content": f"Aquí tengo una lista de palabras en {language}: '{foreign_word}'. Genera 3 oraciones por cada palabra de la lista."}
+        {"role": "system", "content": f"Idioma elegido por usuario: '{language}'"},
+        {"role": "user", "content": f"Aquí tengo una lista de palabras: '{foreign_word}'. Genera 3 oraciones por cada palabra de la lista."}
     ]
     raw_response = query_agent("gpt-4o-mini", messages)
     sentences_dict = parse_json(raw_response)
+    pprint(sentences_dict)
+    if not ask_for_confirmation(f"Continue?"):
+        exit(1)
     notes = []
 
     # Process each sentence and its translation.
