@@ -10,8 +10,11 @@ import json
 import requests
 import re
 import argparse
+import string
+import random
 from pprint import pprint
-from gtts import gTTS
+import shutil
+from time import sleep
 
 def anki_connect(action, params={}):
     try:
@@ -19,7 +22,10 @@ def anki_connect(action, params={}):
             params = []
         request = json.dumps({"action": action, "version": 6, "params": params})
         response = requests.post("http://localhost:8765", data=request)
-        return response.json()
+        resp_json = response.json()
+        if 'error' in resp_json and resp_json['error']:
+            print("Error: " + str(resp_json['error']))
+        return resp_json
     except requests.ConnectionError:
         print("AnkiConnect is not running. Please turn it on.")
         exit(1)
@@ -40,8 +46,8 @@ def read_file(input_file):
         print(f"Error reading input file: {e}")
         sys.exit(1)
 
-def make_note(deck, front, back, front_sound, back_sound):
-    return {
+def anki_add_note(deck, front, back, front_sound, back_sound):
+    notes = [{
         "deckName": deck,
         "modelName": "BasicWithTTS",
         "fields": {
@@ -54,28 +60,24 @@ def make_note(deck, front, back, front_sound, back_sound):
             "allowDuplicate": True
         },
         "tags": []
-    }
-
-def anki_add_notes(notes):
+    }]
     resp_json = anki_connect("addNotes", { "notes": notes } )
-    print("AnkiConnect response:")
-    print(json.dumps(resp_json, indent=2))
 
 def parse_json(raw):
-    json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+    json_match = re.search(r'(\{.*\}|\[.*\])', raw, re.DOTALL)
     if json_match:
-        flashcards_json = json_match.group(0)
+        json_str = json_match.group(0)
         try:
-            sentences_dict = json.loads(flashcards_json)
+            data = json.loads(json_str)
         except json.JSONDecodeError as e:
             print("Failed to decode JSON. Raw string was:")
-            print(flashcards_json)
+            print(json_str)
             sys.exit(1)
     else:
         print("No valid JSON found. Raw string was:")
         print(raw)
         sys.exit(1)
-    return sentences_dict
+    return data
 
 def get_openai_key():
     try:
@@ -107,27 +109,6 @@ def get_azure_key():
 
 openai.api_key = get_openai_key()
 
-def openai_tts(sentence, audio_filepath):
-    try:
-        tts_resp = openai.audio.speech.create(
-            model="gpt-4o-mini-tts",
-            voice="alloy",
-            input=sentence,
-        )
-        tts_resp.stream_to_file(audio_filepath)
-    except Exception as e:
-        print("Error generating TTS audio for sentence with OpenAI:", e)
-        sys.exit(1)
-
-def gtts_tts(sentence, audio_filepath, lang):
-    print(lang)
-    try:
-        tts = gTTS(text=sentence, lang=lang)
-        tts.save(audio_filepath)
-    except Exception as e:
-        print("Error generating TTS audio for sentence with gTTS:", e)
-        sys.exit(1)
-
 azure_token = 0 # Cache the token
 def get_azure_token():
     global azure_token
@@ -140,59 +121,44 @@ def get_azure_token():
         azure_token = str(response.text)
     return azure_token
 
+def get_lang(language):
+    mapping = {
+        "english": "en", "french": "fr", "spanish": "es", "german": "de", "italian": "it",
+        "japanese": "ja", "chinese": "zh", "mandarin": "zh", "russian": "ru", "korean": "ko",
+        "portuguese": "pt", "hindi": "hi", "arabic": "ar", "indonesian": "id", "tagalog": "fil",
+        "filipino": "fil", "turkish": "tr"
+    }
+    return mapping.get(language.lower(), "en")
+
+# https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support?tabs=tts
 def azure_tts(text, path, language):
-    import random
-    # Voice dictionary mapping language keys to available voices.
     voice_dict = {
-        "de": ["de-DE-Florian:DragonHDLatestNeural", "de-DE-Seraphina:DragonHDLatestNeural", "de-DE-GiselaNeural"],
-        "hi": ["hi-IN-AaravNeural", "hi-IN-AnanyaNeural", "hi-IN-AartiNeural", "hi-IN-ArjunNeural",
-               "hi-IN-KavyaNeural", "hi-IN-KunalNeural", "hi-IN-RehaanNeural", "hi-IN-SwaraNeural", "hi-IN-MadhurNeural"],
-        "es": ["es-MX-DaliaNeural", "es-MX-JorgeNeural", "es-MX-BeatrizNeural", "es-MX-CandelaNeural",
-               "es-MX-CarlotaNeural", "es-MX-CecilioNeural", "es-MX-GerardoNeural", "es-MX-LarissaNeural",
-               "es-MX-LibertoNeural", "es-MX-LucianoNeural", "es-MX-MarinaNeural", "es-MX-NuriaNeural",
-               "es-MX-PelayoNeural", "es-MX-RenataNeural", "es-MX-YagoNeural"],
+        "de": ["de-DE-GiselaNeural"],
+        "hi": ["hi-IN-AnanyaNeural", "hi-IN-AartiNeural", "hi-IN-KavyaNeural", "hi-IN-SwaraNeural"],
+        "es": ["es-MX-DaliaNeural", "es-MX-BeatrizNeural", "es-MX-CandelaNeural", "es-MX-CarlotaNeural", "es-MX-LarissaNeural", "es-MX-MarinaNeural", "es-MX-NuriaNeural", "es-MX-RenataNeural"],
         "id": ["id-ID-GadisNeural", "id-ID-ArdiNeural"],
         "tr": ["tr-TR-EmelNeural", "tr-TR-AhmetNeural"],
-        "ja": ["ja-JP-Masaru:DragonHDLatestNeural", "ja-JP-Nanami:DragonHDLatestNeural"],
-        "zh": ["zh-CN-Xiaochen:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", 
-               "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural", "zh-CN-Yunxiao:DragonHDFlashLatestNeural",
-               "zh-CN-Yunyi:DragonHDFlashLatestNeural", "zh-CN-Xiaochen:DragonHDLatestNeural", "zh-CN-Yunfan:DragonHDLatestNeural", "zh-CN-XiaoshuangNeural", "zh-CN-XiaoyouNeural"],
+        "ja": ["ja-JP-NanamiNeural", "ja-JP-AoiNeural", "ja-JP-MayuNeural", "ja-JP-ShioriNeural"],
+        #"zh": ["zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaochenNeural", "zh-CN-XiaochenMultilingualNeural4", "zh-CN-XiaohanNeural", "zh-CN-XiaomengNeural", "zh-CN-XiaomoNeural", "zh-CN-XiaoqiuNeural", "zh-CN-XiaorouNeural", "zh-CN-XiaoruiNeural", "zh-CN-XiaoshuangNeural", "zh-CN-XiaoxiaoDialectsNeural", "zh-CN-XiaoxiaoMultilingualNeural4", "zh-CN-XiaoyanNeural", "zh-CN-XiaoyouNeural", "zh-CN-XiaoyuMultilingualNeural4", "zh-CN-XiaozhenNeural"],
+        #"zh": ["zh-CN-Xiaochen:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"],
+        "zh": ["zh-CN-Xiaochen:DragonHDLatestNeural"],
         "fil": ["fil-PH-BlessicaNeural", "fil-PH-AngeloNeural"],
-        "fr": ["fr-FR-EloiseNeural", "fr-FR-Remy:DragonHDLatestNeural", "fr-FR-Vivienne:DragonHDLatestNeural"]
+        "fr": ["fr-FR-DeniseNeural", "fr-FR-VivienneMultilingualNeural4", "fr-FR-BrigitteNeural", "fr-FR-CelesteNeural", "fr-FR-CoralieNeural", "fr-FR-EloiseNeural", "fr-FR-JacquelineNeural", "fr-FR-JosephineNeural", "fr-FR-YvetteNeural"]
     }
-
-    # Map input language to a key.
-    lang_map = {
-        "german": "de",
-        "hindi": "hi",
-        "spanish": "es",
-        "indonesian": "id",
-        "turkish": "tr",
-        "japanese": "ja",
-        "chinese": "zh",
-        "mandarin": "zh",
-        "filipino": "fil",
-        "tagalog": "fil",
-        "french": "fr"
-    }
-    key = lang_map.get(language.lower(), "en")
-
-
+    key = get_lang(language)
     if key in voice_dict:
         voice = random.choice(voice_dict[key])
     else:
         print("Azure language not supported!")
         exit(1)
-
-    voice_name = voice
-
+    if "HD" in voice:
+        sleep(7)
     sanitized_text = re.sub(r'[&<>"\']', ' ', re.sub(r'\s+', ' ', text))
     ssml = f"""<speak version='1.0' xml:lang='en-US'>
-  <voice name='{voice_name}'>
+  <voice name='{voice}'>
     {sanitized_text}
   </voice>
 </speak>"""
-
     tts_url = "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
     headers = {
         "Authorization": "Bearer " + get_azure_token(),
@@ -205,7 +171,12 @@ def azure_tts(text, path, language):
         with open(path, "wb") as audio:
             audio.write(response.content)
     else:
-        raise Exception("TTS request failed with status code: " + str(response.status_code))
+        try:
+            error_json = response.json()
+            error_message = error_json.get('error', response.text)
+        except Exception:
+            error_message = response.text
+            print(f"TTS request failed with status code {response.status_code}: {error_message}")
 
 def query_agent(model, messages):
     try:
@@ -231,17 +202,14 @@ def run_shell_command(command):
     if not ask_for_confirmation(f"Do you want to run the following command? {GREEN}{command}"):
         print("Command execution cancelled.")
         return "Command was not approved by user.", "", False
-
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True, bufsize=1)
     stdout_lines = []
     stderr_lines = []
-
     def read_stream(stream, lines):
         for line in iter(stream.readline, ''):
             print(line, end='')
             lines.append(line)
         stream.close()
-
     t1 = threading.Thread(target=read_stream, args=(process.stdout, stdout_lines))
     t2 = threading.Thread(target=read_stream, args=(process.stderr, stderr_lines))
     t1.start()
@@ -251,37 +219,25 @@ def run_shell_command(command):
     t2.join()
     return "".join(stdout_lines), "".join(stderr_lines), True
 
-def get_gtts_lang(language):
-    mapping = {
-        "english": "en",
-        "french": "fr",
-        "spanish": "es",
-        "german": "de",
-        "italian": "it",
-        "japanese": "ja",
-        "chinese": "zh-CN",
-        "russian": "ru",
-        "korean": "ko",
-        "portuguese": "pt",
-        "arabic": "ar",
-        "indonesian": "id",
-        "turkish": "tr"
-    }
+def short_random_id():
+    chars = string.ascii_lowercase + string.digits
+    return ''.join(random.choice(chars) for _ in range(8))
 
-    return mapping.get(language.lower(), "en")
-
-def tts_to_anki_media(service, text, language):
-    # Remove non-word characters and replace spaces with underscores.
-    audio_filename = re.sub(r'[^a-zA-Z0-9]', '_s', text).strip('_') + ".mp3"
-    # Construct the full file path in the media directory.
+def tts_to_anki_media(text, language):
+    audio_filename = re.sub(r'[^a-zA-Z0-9]', '_', text).strip('_')[:30] + short_random_id() + ".mp3"
     audio_filepath = os.path.join(os.path.expanduser("~/anki_media"), audio_filename)
-    if service == "gtts":
-        gtts_tts(text, audio_filepath, get_gtts_lang(language))
-    elif service == "azure":
-        azure_tts(text, audio_filepath, language)
-    else:
-        openai_tts(text, audio_filepath)
+    azure_tts(text, audio_filepath, language)
     return audio_filename
+
+def translate_items(texts, source_language, target_language):
+    messages = [
+        {"role": "system", "content": (
+            f"You are a helpful assistant that translates {source_language} sentences to {target_language}. "
+            "Provide a JSON object mapping each sentence to its translation, without additional text. The original sentence should be the key and the translated sentence should be the value.")},
+        {"role": "user", "content": json.dumps(texts)}
+    ]
+    raw = query_agent("gpt-4.1-mini", messages)
+    return parse_json(raw)
 
 # ANSI color codes
 RED = "\033[91m"
@@ -313,7 +269,7 @@ def chat():
         conversation_history.append({"role": "user", "content": user_input})
 
         while True:
-            response = query_agent("gpt-4o-mini", conversation_history[-10:])
+            response = query_agent("gpt-4.1-mini", conversation_history[-10:])
             print(f"{GREEN}{response}{RESET}\n")
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
@@ -337,15 +293,15 @@ def rw():
     messages=[
         {"role": "system", "content": (
             "You are a helpful code assistant. The user will provide a file of code and a suggested change, "
-            "and your job is to make a minimal edit implementing that change. Avoid commentary, only responding with the updated file or part of the file.")},
+            "and your job is to make a minimal edit implementing that change. Avoid commentary and extra formatting, only responding with the updated file.")},
         {"role": "user", "content": read_file(input_file)},
         {"role": "user", "content": input(f"{RED}> {RESET}").strip()}
     ]
 
-    response = query_agent("o3-mini", messages)
+    response = query_agent("gpt-4.1-mini", messages)
     input_path = Path(input_file)
     backup_file = input_path.with_name(input_path.name + ".old")
-    input_path.rename(backup_file)
+    shutil.copy2(input_file, backup_file)
     with open(input_file, 'w') as f:
         f.write(response)
 
@@ -357,82 +313,99 @@ def rw():
     else:
         print("Backup file retained.")
 
-def teach():
-    parser = argparse.ArgumentParser(description="Teach flashcards with TTS reading support.")
-    parser.add_argument("subject", nargs="+", help="Subject for flashcards")
-    parser.add_argument("--lang", default="Spanish", help="Language for TTS reading")
-    parser.add_argument("--tts", choices=["openai", "gtts", "azure"], default="azure",
-                        help="Specify whether to use 'openai', 'gtts' or 'azure' for text-to-speech output.")
+def create_flashcards(sentences_prompt):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
+    parser.add_argument("-b", "--back-language", required=True, help="The language for the back of the flashcards.")
+    parser.add_argument("topic", nargs="+")
     args = parser.parse_args()
-    subject = " ".join(args.subject).strip()
-    lang = args.lang
-    check_deck_exists(lang)
+    front_language = args.front_language.strip().capitalize()
+    back_language = args.back_language.strip().capitalize()
+    topic = " ".join(args.topic).strip()
 
-    messages=[
-        {"role": "system", "content": f"You are a helpful assistant that generates flashcards. "
-                                       "Provide a JSON object where each key is a question and each value is the answer, without any additional text or formatting. "
-                                       "Aim for brevity in the answer field. "},
-        {"role": "user", "content": f"Generate flashcards in {lang} about: {subject}."}
-    ]
-    flashcards = parse_json(query_agent("gpt-4o-mini", messages))
+    check_deck_exists(front_language)
 
-    pprint(flashcards)
-    if not ask_for_confirmation(f"Continue?"):
+    raw = query_agent("gpt-4.1-mini", [{"role": "system", "content": sentences_prompt.format(t=topic, fl=front_language)}])
+    sentences = parse_json(raw)
+    pprint(sentences)
+    if not ask_for_confirmation("Continue?"):
         exit(1)
-    
-    # Build the list of note payloads for AnkiConnect.
-    notes = []
-    for question, answer in flashcards.items():
-        print(question+"\t"+answer)
-        front_audio_filename = tts_to_anki_media(args.tts, question, lang)
-        back_audio_filename = tts_to_anki_media(args.tts, answer, lang)
-        note = make_note(lang.capitalize(), question, answer, front_audio_filename, back_audio_filename)
-        notes.append(note)
-    
-    anki_add_notes(notes)
+    translations = translate_items(sentences, front_language, back_language)
+    pprint(translations)
+
+    for sentence, translation in translations.items():
+        print(sentence+"\t"+translation)
+        front_audio_filename = tts_to_anki_media(sentence, front_language)
+        back_audio_filename = tts_to_anki_media(translation, back_language)
+        anki_add_note(front_language, sentence, translation, front_audio_filename, back_audio_filename)
+
+def teach():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("level", choices=['easy', 'hard'], help="Learning level")
+    parser.add_argument("rest", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    level = args.level
+    sys.argv = [sys.argv[0]] + args.rest
+
+    level_descriptions = {
+        "easy": "children, aiming for ease of understanding",
+        "hard": "graduate students"
+    }
+    level_desc = level_descriptions.get(level)
+
+    sentences_prompt = (
+        "You are an expert teacher of {t} in the {fl} language. "
+        "Provide a JSON list of strings, containing sentences about {t} in {fl}, suitable for " + level_desc + ". Focus on technical specifics instead of trivia, and avoid extra commentary or text."
+    )
+    create_flashcards(sentences_prompt)
 
 def vocab():
-    parser = argparse.ArgumentParser(description="Generate flashcards with TTS audio.")
-    parser.add_argument("language", help="The language of the flashcards.")
-    parser.add_argument("foreign_word", nargs="+", help="The foreign word(s) for which to generate sentences.")
-    parser.add_argument("--tts", choices=["openai", "gtts", "azure"], default="azure",
-                        help="Specify whether to use 'openai', 'gtts' or 'azure' for text-to-speech output.")
+    sentences_prompt = (
+        "You are a helpful assistant that generates sentences in {fl}. Provide a JSON list of sentences (each 3 to 7 words). "
+        "The vocab in question is: {t}. Make 3 sentences for each vocab word. Avoid extra commentary or text."
+    )
+    create_flashcards(sentences_prompt)
+
+def create_flashcards_from_vocab_list():
+    parser = argparse.ArgumentParser(description="Choose an entry point")
+    parser.add_argument("filepath", help="File containing vocab entries")
+    parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    language = args.language.strip().capitalize()
-    check_deck_exists(language)
-    foreign_word = " ".join(args.foreign_word).strip()
 
-    messages=[
-        {"role": "system", "content": (
-            f"Eres un asistente útil que genera tarjetas didácticas. Proporciona las tarjetas como un objeto JSON "
-            "donde cada clave sea una oración de 3 a 7 palabras y cada valor sea la traducción correspondiente al español. Evita formato adicional o comentarios. "
-            "Por ejemplo, si el usuario proporciona la palabra indonesia kompas, podrías incluir: 'Barat Daya adalah posisi kompas': 'Suroeste es una posición en la brújula' "
-        )},
-        {"role": "system", "content": f"Idioma elegido por usuario: '{language}'"},
-        {"role": "user", "content": f"Aquí tengo una lista de palabras: '{foreign_word}'. Genera 3 oraciones por cada palabra de la lista."}
-    ]
-    raw_response = query_agent("gpt-4o-mini", messages)
-    sentences_dict = parse_json(raw_response)
-    pprint(sentences_dict)
-    if not ask_for_confirmation(f"Continue?"):
-        exit(1)
-    notes = []
+    vocab_file_path = Path(args.filepath)
+    sys.argv = [sys.argv[0]] + args.rest + ["EmptyTopic"]
 
-    # Process each sentence and its translation.
-    for sentence, translation in sentences_dict.items():
-        print(sentence+"\t"+translation)
-        front_audio_filename = tts_to_anki_media(args.tts, sentence, language)
-        back_audio_filename = tts_to_anki_media(args.tts, translation, "Spanish")
+    if not vocab_file_path.exists():
+        print(f"Vocab file {vocab_file_path} does not exist.")
+        sys.exit(1)
 
-        note = make_note(language, sentence, translation, front_audio_filename, back_audio_filename)
-        notes.append(note)
+    with open(vocab_file_path, 'r', encoding='utf-8') as f:
+        lines = [line.strip() for line in f if line.strip()]
 
-    anki_add_notes(notes)
+    words_to_use = lines[:11]
+    if not words_to_use:
+        print("No words found in vocab file.")
+        sys.exit(1)
+
+    # Prepare vocab string by joining words with commas or spaces
+    vocab_str = ", ".join(words_to_use)
+
+    sentences_prompt = (
+        "You are a helpful assistant that generates sentences for {fl} learners. Provide a JSON list of sentences (each 3 to 7 words). "
+        "The vocab in question is: " + vocab_str + ". Please create about 8 sentences, using these words as frequently as possible. Avoid extra commentary or text."
+    )
+    create_flashcards(sentences_prompt)
+
+    # Remove the top word from the file
+    lines.pop(0)
+    with open(vocab_file_path, 'w', encoding='utf-8') as f:
+        for line in lines:
+            f.write(line + '\n')
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Choose an entry point: rw, teach, chat, vocab")
-    parser.add_argument("cmd", choices=["rw", "teach", "chat", "vocab"], help="Command to execute")
-    parser.add_argument("rest", nargs=argparse.REMAINDER, help="Additional arguments for the selected command")
+    parser = argparse.ArgumentParser(description="Choose an entry point")
+    parser.add_argument("cmd", choices=["rw", "teach", "chat", "vocab", "vocabfile"], help="Command to execute")
+    parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
     sys.argv = [sys.argv[0]] + args.rest
@@ -444,3 +417,5 @@ if __name__ == '__main__':
         chat()
     elif args.cmd == "vocab":
         vocab()
+    elif args.cmd == "vocabfile":
+        create_flashcards_from_vocab_list()
