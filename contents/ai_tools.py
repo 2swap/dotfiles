@@ -382,7 +382,7 @@ def create_flashcards_from_vocab_list():
     with open(vocab_file_path, 'r', encoding='utf-8') as f:
         lines = [line.strip() for line in f if line.strip()]
 
-    words_to_use = lines[:11]
+    words_to_use = lines[:2]
     if not words_to_use:
         print("No words found in vocab file.")
         sys.exit(1)
@@ -392,7 +392,7 @@ def create_flashcards_from_vocab_list():
 
     sentences_prompt = (
         "You are a helpful assistant that generates sentences for {fl} learners. Provide a JSON list of sentences (each 3 to 7 words). "
-        "The vocab in question is: " + vocab_str + ". Please create about 8 sentences, using these words as frequently as possible. Avoid extra commentary or text."
+        "The vocab in question is: " + vocab_str + ". Please create about 3 sentences, using these words a few times each. Avoid extra commentary or text."
     )
     create_flashcards(sentences_prompt)
 
