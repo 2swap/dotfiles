@@ -313,6 +313,13 @@ def rw():
     else:
         print("Backup file retained.")
 
+def insert_into_anki(translations, front_language, back_language):
+    for front, back in translations.items():
+        print(front+"\t"+back)
+        front_audio_filename = tts_to_anki_media(front, front_language)
+        back_audio_filename = tts_to_anki_media(back, back_language)
+        anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename)
+
 def create_flashcards(sentences_prompt):
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
@@ -332,14 +339,32 @@ def create_flashcards(sentences_prompt):
         exit(1)
     translations = translate_items(sentences, front_language, back_language)
     pprint(translations)
-
-    for sentence, translation in translations.items():
-        print(sentence+"\t"+translation)
-        front_audio_filename = tts_to_anki_media(sentence, front_language)
-        back_audio_filename = tts_to_anki_media(translation, back_language)
-        anki_add_note(front_language, sentence, translation, front_audio_filename, back_audio_filename)
+    insert_into_anki(translations, front_language, back_language)
 
 def teach():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-l", "--language", required=True, help="The language for the flashcards.")
+    parser.add_argument("topic", nargs="+")
+    args = parser.parse_args()
+    lang = args.lang.strip().capitalize()
+    topic = " ".join(args.topic).strip()
+    sentences_prompt=[
+        {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
+                                       "Provide a JSON object where each key is a question and each value is the answer, without any additional text or formatting. "
+                                       "Aim for brevity in the answer field. "},
+        {"role": "user", "content": f"Generate flashcards in {lang} about: {topic}."}
+    ]
+
+    check_deck_exists(front_language)
+
+    raw = query_agent("gpt-4.1-mini", sentences_prompt)
+    sentences = parse_json(raw)
+    pprint(sentences)
+    if not ask_for_confirmation("Continue?"):
+        exit(1)
+    insert_into_anki(translations, front_language, front_language)
+
+def lecture():
     parser = argparse.ArgumentParser()
     parser.add_argument("level", choices=['easy', 'hard'], help="Learning level")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
@@ -404,7 +429,7 @@ def create_flashcards_from_vocab_list():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["rw", "teach", "chat", "vocab", "vocabfile"], help="Command to execute")
+    parser.add_argument("cmd", choices=["rw", "teach", "chat", "vocab", "vocabfile", "lecture"], help="Command to execute")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -419,3 +444,5 @@ if __name__ == '__main__':
         vocab()
     elif args.cmd == "vocabfile":
         create_flashcards_from_vocab_list()
+    elif args.cmd == "lecture":
+        lecture()
