@@ -255,9 +255,10 @@ RESET = "\033[0m"
 
 
 def chat():
-    conversation_history = [{"role": "system", "content": (
+    instructions = {"role": "system", "content": (
         "You are a helpful assistant. If needed, you can execute shell commands on the host machine. "
-        "You may output a line such as 'SHELL: `ls ~`' and the output will be provided.")}]
+        "You may output a line such as 'SHELL: `ls ~`' and the output will be provided.")}
+    conversation_history = []
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
@@ -269,7 +270,7 @@ def chat():
         conversation_history.append({"role": "user", "content": user_input})
 
         while True:
-            response = query_agent("gpt-4.1-mini", conversation_history[-10:])
+            response = query_agent("gpt-4.1-mini", [instructions] + conversation_history[-10:])
             print(f"{GREEN}{response}{RESET}\n")
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
