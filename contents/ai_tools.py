@@ -268,7 +268,7 @@ def chat():
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
-        if len(user_input) < 5:
+        if user_input in ["wipe"]:
             conversation_history = []
             print(f"{GREEN}Wiped chat history.{RESET}\n")
             continue
@@ -276,7 +276,7 @@ def chat():
         conversation_history.append({"role": "user", "content": user_input})
 
         while True:
-            response = query_agent("gpt-4.1-mini", conversation_history[-10:])
+            response = query_agent("gpt-4.1-mini", [instructions] + conversation_history[-20:])
             print(f"{GREEN}{response}{RESET}\n")
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
