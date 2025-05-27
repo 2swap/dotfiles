@@ -15,6 +15,7 @@ import random
 from pprint import pprint
 import shutil
 from time import sleep
+import tempfile
 
 def anki_connect(action, params={}):
     try:
@@ -143,7 +144,8 @@ def azure_tts(text, path, language):
         #"zh": ["zh-CN-Xiaochen:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"],
         "zh": ["zh-CN-Xiaochen:DragonHDLatestNeural"],
         "fil": ["fil-PH-BlessicaNeural", "fil-PH-AngeloNeural"],
-        "fr": ["fr-FR-DeniseNeural", "fr-FR-VivienneMultilingualNeural4", "fr-FR-BrigitteNeural", "fr-FR-CelesteNeural", "fr-FR-CoralieNeural", "fr-FR-EloiseNeural", "fr-FR-JacquelineNeural", "fr-FR-JosephineNeural", "fr-FR-YvetteNeural"]
+        "fr": ["fr-FR-DeniseNeural", "fr-FR-VivienneMultilingualNeural4", "fr-FR-BrigitteNeural", "fr-FR-CelesteNeural", "fr-FR-CoralieNeural", "fr-FR-EloiseNeural", "fr-FR-JacquelineNeural", "fr-FR-JosephineNeural", "fr-FR-YvetteNeural"],
+        "en": ["en-US-Phoebe:DragonHDLatestNeural"]
     }
     key = get_lang(language)
     if key in voice_dict:
@@ -232,7 +234,7 @@ def tts_to_anki_media(text, language):
 def translate_items(texts, source_language, target_language):
     messages = [
         {"role": "system", "content": (
-            f"You are a helpful assistant that translates {source_language} sentences to {target_language}. "
+            f"You are a {source_language} to {target_language} translator. "
             "Provide a JSON object mapping each sentence to its translation, without additional text. The original sentence should be the key and the translated sentence should be the value.")},
         {"role": "user", "content": json.dumps(texts)}
     ]
@@ -256,8 +258,13 @@ RESET = "\033[0m"
 
 def chat():
     conversation_history = [{"role": "system", "content": (
-        "You are a helpful assistant. If needed, you can execute shell commands on the host machine. "
-        "You may output a line such as 'SHELL: `ls ~`' and the output will be provided.")}]
+        "You are a helpful assistant who specializes in debug. "
+        "If the user asks for debug help, return a two-line reply. "
+        "On the first line, invoke a command by using this syntax on the first line of your response: 'SHELL: `ls ~`'. "
+        "The command must be packed into one line, and the output will be provided to you for inspection. "
+        "On the second line, in one sentence, explain your command. "
+        "If the user asks for something other than debug, simply respond in text. "
+    )}]
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
@@ -273,15 +280,14 @@ def chat():
             print(f"{GREEN}{response}{RESET}\n")
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
-            for line in response.splitlines():
-                match = re.search(r'^SHELL: `([^`]*)`$', line)
-                if match:
-                    command = match.group(1)
-                    stdout, stderr, line_had_shell = run_shell_command(command)
-                    result_message = f"STDOUT: {stdout}\nSTDERR: {stderr}"
-                    conversation_history.append({"role": "system", "content": result_message})
-                    break
-            if not line_had_shell:
+            line1 = response.splitlines()[0]
+            match = re.search(r'^SHELL: `([^`]*)`$', line1.strip())
+            if match:
+                command = match.group(1)
+                stdout, stderr, line_had_shell = run_shell_command(command)
+                result_message = f"STDOUT: {stdout}\nSTDERR: {stderr}"
+                conversation_history.append({"role": "system", "content": result_message})
+            else:
                 break
 
 def rw():
@@ -290,28 +296,87 @@ def rw():
         sys.exit(1)
 
     input_file = sys.argv[1]
+    input_path = Path(input_file)
+    try:
+        with open(input_file, 'r') as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"Error reading input file: {e}")
+        sys.exit(1)
+
+    start_indices = [i for i, line in enumerate(lines) if 'RW_'+'START' in line]
+    end_indices = [i for i, line in enumerate(lines) if 'RW_'+'END' in line]
+
+    # Validate counts
+    if len(start_indices) != len(end_indices):
+        print("Error: Number of START lines does not match number of END lines.")
+        sys.exit(1)
+    if len(start_indices) > 1 or len(end_indices) > 1:
+        print("Error: More than one START or END found.")
+        sys.exit(1)
+    if len(start_indices) == 1 and start_indices[0] > end_indices[0]:
+        print("Error: START occurs after END.")
+        sys.exit(1)
+
+    if len(start_indices) == 1:
+        start = start_indices[0]
+        end = end_indices[0]
+        section_lines = lines[start+1:end]
+        section_text = ''.join(section_lines)
+    else:
+        section_text = ''.join(lines)  # whole file if no markers
+
     messages=[
         {"role": "system", "content": (
             "You are a helpful code assistant. The user will provide a file of code and a suggested change, "
-            "and your job is to make a minimal edit implementing that change. Avoid commentary and extra formatting, only responding with the updated file.")},
-        {"role": "user", "content": read_file(input_file)},
+            "and your job is to make a minimal edit implementing that change. "
+            "Pay particular attention to leaving the indentation as it was, so the updated version can be directly copied to the source file. "
+            "Avoid commentary and extra formatting, only responding with the updated file or content.")},
+        {"role": "user", "content": section_text},
         {"role": "user", "content": input(f"{RED}> {RESET}").strip()}
     ]
 
     response = query_agent("gpt-4.1-mini", messages)
-    input_path = Path(input_file)
-    backup_file = input_path.with_name(input_path.name + ".old")
-    shutil.copy2(input_file, backup_file)
-    with open(input_file, 'w') as f:
-        f.write(response)
 
-    subprocess.run(["meld", str(backup_file), input_file])
+    # Create temp files for meld and editing
+    with tempfile.NamedTemporaryFile('w+', delete=False, encoding='utf-8') as temp_original:
+        temp_original_path = temp_original.name
+        temp_original.write(section_text)
+        temp_original.flush()
+    with tempfile.NamedTemporaryFile('w+', delete=False, encoding='utf-8') as temp_rewritten:
+        temp_rewritten_path = temp_rewritten.name
+        temp_rewritten.write(response)
+        temp_rewritten.flush()
 
-    if ask_for_confirmation("Do you want to delete the backup file?"):
-        backup_file.unlink()
-        print("Backup file deleted.")
+    subprocess.run(["meld", temp_original_path, temp_rewritten_path])
+
+    if ask_for_confirmation("Do you want to delete the temporary files and copy the changes back to the original file?"):
+        try:
+            # Read the rewritten content back
+            with open(temp_rewritten_path, 'r', encoding='utf-8') as f:
+                updated_content = f.read()
+            if len(start_indices) == 1:
+                # Replace section in original lines
+                new_lines = lines[:start+1] + [updated_content if updated_content.endswith('\n') else updated_content+'\n'] + lines[end:]
+            else:
+                # Replace whole file content
+                new_lines = [updated_content if updated_content.endswith('\n') else updated_content+'\n']
+            # Write back to original file
+            with open(input_file, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            print(f"Updated content copied back to {input_file}.")
+        except Exception as e:
+            print(f"Error copying back updated content: {e}")
+
+        # Delete temp files
+        try:
+            os.unlink(temp_original_path)
+            os.unlink(temp_rewritten_path)
+            print("Temporary files deleted.")
+        except Exception as e:
+            print(f"Error deleting temporary files: {e}")
     else:
-        print("Backup file retained.")
+        print(f"Temporary files at {temp_original_path}, {temp_rewritten_path}")
 
 def insert_into_anki(translations, front_language, back_language):
     for front, back in translations.items():
@@ -333,11 +398,10 @@ def create_flashcards(sentences_prompt):
     check_deck_exists(front_language)
 
     raw = query_agent("gpt-4.1-mini", [{"role": "system", "content": sentences_prompt.format(t=topic, fl=front_language)}])
-    sentences = parse_json(raw)
-    pprint(sentences)
+    print(raw)
     if not ask_for_confirmation("Continue?"):
         exit(1)
-    translations = translate_items(sentences, front_language, back_language)
+    translations = translate_items(raw, front_language, back_language)
     pprint(translations)
     insert_into_anki(translations, front_language, back_language)
 
@@ -346,7 +410,7 @@ def teach():
     parser.add_argument("-l", "--language", required=True, help="The language for the flashcards.")
     parser.add_argument("topic", nargs="+")
     args = parser.parse_args()
-    lang = args.lang.strip().capitalize()
+    lang = args.language.strip().capitalize()
     topic = " ".join(args.topic).strip()
     sentences_prompt=[
         {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
@@ -355,14 +419,14 @@ def teach():
         {"role": "user", "content": f"Generate flashcards in {lang} about: {topic}."}
     ]
 
-    check_deck_exists(front_language)
+    check_deck_exists(lang)
 
     raw = query_agent("gpt-4.1-mini", sentences_prompt)
     sentences = parse_json(raw)
     pprint(sentences)
     if not ask_for_confirmation("Continue?"):
         exit(1)
-    insert_into_anki(translations, front_language, front_language)
+    insert_into_anki(sentences, lang, lang)
 
 def lecture():
     parser = argparse.ArgumentParser()
@@ -386,8 +450,11 @@ def lecture():
 
 def vocab():
     sentences_prompt = (
-        "You are a helpful assistant that generates sentences in {fl}. Provide a JSON list of sentences (each 3 to 7 words). "
-        "The vocab in question is: {t}. Make 3 sentences for each vocab word. Avoid extra commentary or text."
+        "You are an assistant that generates facts for a children's encyclopedia in {fl}. "
+        "The sentences must be short and grammatically correct. "
+        "Make 3 strings for each vocab word: {t}. "
+        "For example, if the vocab word were 'brain', you might say 'Romans used mouse brains as toothpaste.' "
+        "Do not add any formatting or text. "
     )
     create_flashcards(sentences_prompt)
 
