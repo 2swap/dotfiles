@@ -257,14 +257,15 @@ RESET = "\033[0m"
 
 
 def chat():
-    conversation_history = [{"role": "system", "content": (
+    instructions = {"role": "system", "content": (
         "You are a helpful assistant who specializes in debug. "
         "If the user asks for debug help, return a two-line reply. "
         "On the first line, invoke a command by using this syntax on the first line of your response: 'SHELL: `ls ~`'. "
         "The command must be packed into one line, and the output will be provided to you for inspection. "
         "On the second line, in one sentence, explain your command. "
         "If the user asks for something other than debug, simply respond in text. "
-    )}]
+    )}
+    conversation_history = []
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
