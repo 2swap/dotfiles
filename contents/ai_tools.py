@@ -451,11 +451,10 @@ def lecture():
 
 def vocab():
     sentences_prompt = (
-        "You are an assistant that generates facts for a children's encyclopedia in {fl}. "
-        "The sentences must be short and grammatically correct. "
-        "Make 3 strings for each vocab word: {t}. "
+        "You are an assistant that generates very short (5-12 word) trivia facts in {fl}. "
+        "Make a JSON list of strings, and be sure to use the following vocab words 3 times each: {t}. "
         "For example, if the vocab word were 'brain', you might say 'Romans used mouse brains as toothpaste.' "
-        "Do not add any formatting or text. "
+        "Do not add any extra formatting or text. "
     )
     create_flashcards(sentences_prompt)
 
