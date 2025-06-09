@@ -203,7 +203,8 @@ def ask_for_confirmation(query):
 def run_shell_command(command):
     if not ask_for_confirmation(f"Do you want to run the following command? {GREEN}{command}"):
         print("Command execution cancelled.")
-        return "Command was not approved by user.", "", False
+        user_input = input(f"What was wrong? {RED}> {RESET}").strip()
+        return "Command was not approved by user. Reason: " + user_input, "", False
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True, bufsize=1)
     stdout_lines = []
     stderr_lines = []
@@ -273,6 +274,8 @@ def chat():
             conversation_history = []
             print(f"{GREEN}Wiped chat history.{RESET}\n")
             continue
+        if user_input in ["exit", "quit"]:
+            break
 
         conversation_history.append({"role": "user", "content": user_input})
 
@@ -290,6 +293,8 @@ def chat():
                 conversation_history.append({"role": "system", "content": result_message})
             else:
                 break
+
+    print("Goodbye!")
 
 def rw():
     if len(sys.argv) != 2:
