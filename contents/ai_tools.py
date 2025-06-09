@@ -451,8 +451,9 @@ def lecture():
 
 def vocab():
     sentences_prompt = (
-        "You are an assistant that generates very short (5-12 word) trivia facts in {fl}. "
-        "Make a JSON list of strings, and be sure to use the following vocab words 3 times each: {t}. "
+        "You are an assistant that generates very short (5-11 word) trivia facts in {fl}. "
+        "Make a diverse JSON list of strings, and be sure to use the following vocab words 3 times each: {t}. "
+        "You may change the form of the vocab words as needed to ensure the sentences are grammatical. "
         "For example, if the vocab word were 'brain', you might say 'Romans used mouse brains as toothpaste.' "
         "Do not add any extra formatting or text. "
     )
