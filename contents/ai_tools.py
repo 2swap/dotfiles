@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import sys
-import openai
+from openai import OpenAI
 import readline  # Enables navigation using arrow keys and delete
 from pathlib import Path
 import subprocess
@@ -16,6 +16,14 @@ from pprint import pprint
 import shutil
 from time import sleep
 import tempfile
+from pydantic import BaseModel
+
+class Card(BaseModel):
+    front: str
+    back: str
+
+class CardList(BaseModel):
+    cards: list[Card]
 
 def anki_connect(action, params={}):
     try:
@@ -108,7 +116,7 @@ def get_azure_key():
         sys.exit(1)
     return azure_api_key
 
-openai.api_key = get_openai_key()
+client = OpenAI(api_key=get_openai_key())
 
 azure_token = 0 # Cache the token
 def get_azure_token():
@@ -180,15 +188,16 @@ def azure_tts(text, path, language):
             error_message = response.text
             print(f"TTS request failed with status code {response.status_code}: {error_message}")
 
-def query_agent(model, messages):
+def query_agent(messages, tf=None):
     try:
-        completion = openai.chat.completions.create(
-            model=model,
-            messages=messages
+        response = client.responses.parse(
+            model="gpt-4.1-mini",
+            input=messages,
+            **({'text_format': tf} if tf else {})
         )
+        return response.output_parsed if tf else response.output_text
     except Exception as e:
         print("Error:", e)
-    return completion.choices[0].message.content.strip()
 
 def ask_for_confirmation(query):
     while True:
@@ -235,12 +244,10 @@ def tts_to_anki_media(text, language):
 def translate_items(texts, source_language, target_language):
     messages = [
         {"role": "system", "content": (
-            f"You are a {source_language} to {target_language} translator. "
-            "Provide a JSON object mapping each sentence to its translation, without additional text. The original sentence should be the key and the translated sentence should be the value.")},
+            f"You are a {source_language} to {target_language} translator of sentence lists. Provide the original sentences on the front and the translations on the back. ")},
         {"role": "user", "content": json.dumps(texts)}
     ]
-    raw = query_agent("gpt-4.1-mini", messages)
-    return parse_json(raw)
+    raw = query_agent(messages, CardList)
 
 # ANSI color codes
 RED = "\033[91m"
@@ -257,14 +264,14 @@ RESET = "\033[0m"
 
 
 
-def chat():
+def debug():
     instructions = {"role": "system", "content": (
-        "You are a helpful assistant who specializes in debug. "
-        "If the user asks for debug help, return a two-line reply. "
-        "On the first line, invoke a command by using this syntax on the first line of your response: 'SHELL: `ls ~`'. "
+        "You are a debug assistant. "
+        "To invoke a command, send a two-line reply. "
+        "On the first line, use this syntax: 'SHELL: `ls ~`'. "
         "The command must be packed into one line, and the output will be provided to you for inspection. "
         "On the second line, in one sentence, explain your command. "
-        "If the user asks for something other than debug, simply respond in text. "
+        "If no command is needed, simply respond in text. "
     )}
     conversation_history = []
 
@@ -280,7 +287,7 @@ def chat():
         conversation_history.append({"role": "user", "content": user_input})
 
         while True:
-            response = query_agent("gpt-4.1-mini", [instructions] + conversation_history[-20:])
+            response = query_agent([instructions] + conversation_history[-20:])
             print(f"{GREEN}{response}{RESET}\n")
             conversation_history.append({"role": "assistant", "content": response})
             line_had_shell = False
@@ -293,6 +300,29 @@ def chat():
                 conversation_history.append({"role": "system", "content": result_message})
             else:
                 break
+
+    print("Goodbye!")
+
+def chat():
+    instructions = {"role": "system", "content": (
+        "You are a helpful chat assistant, specializing in pedagogy. "
+    )}
+    conversation_history = []
+
+    while True:
+        user_input = input(f"{RED}> {RESET}").strip()
+        if user_input in ["wipe"]:
+            conversation_history = []
+            print(f"{GREEN}Wiped chat history.{RESET}\n")
+            continue
+        if user_input in ["exit", "quit"]:
+            break
+
+        conversation_history.append({"role": "user", "content": user_input})
+
+        response = query_agent([instructions] + conversation_history[-20:])
+        print(f"{GREEN}{response}{RESET}\n")
+        conversation_history.append({"role": "assistant", "content": response})
 
     print("Goodbye!")
 
@@ -332,6 +362,10 @@ def rw():
     else:
         section_text = ''.join(lines)  # whole file if no markers
 
+    human_prompt = input(f"{RED}> {RESET}").strip()
+    if len(human_prompt) < 7:
+        return
+
     messages=[
         {"role": "system", "content": (
             "You are a helpful code assistant. The user will provide a file of code and a suggested change, "
@@ -339,10 +373,10 @@ def rw():
             "Pay particular attention to leaving the indentation as it was, so the updated version can be directly copied to the source file. "
             "Avoid commentary and extra formatting, only responding with the updated file or content.")},
         {"role": "user", "content": section_text},
-        {"role": "user", "content": input(f"{RED}> {RESET}").strip()}
+        {"role": "user", "content": human_prompt}
     ]
 
-    response = query_agent("gpt-4.1-mini", messages)
+    response = query_agent(messages)
 
     # Create temp files for meld and editing
     with tempfile.NamedTemporaryFile('w+', delete=False, encoding='utf-8') as temp_original:
@@ -384,8 +418,37 @@ def rw():
     else:
         print(f"Temporary files at {temp_original_path}, {temp_rewritten_path}")
 
-def insert_into_anki(translations, front_language, back_language):
-    for front, back in translations.items():
+def summarize():
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} language <input_file>")
+        sys.exit(1)
+
+    language = sys.argv[1]
+    check_deck_exists(language)
+    input_file = sys.argv[2]
+    input_path = Path(input_file)
+    try:
+        with open(input_file, 'r') as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"Error reading input file: {e}")
+        sys.exit(1)
+    content = ''.join(lines)
+
+    messages=[
+        {"role": "system", "content": (
+            "You are a pedagogical assistant. The user will provide some learning material. "
+            "Please make a list of 10 flash cards about the facts presented in the material. The answer field should not have more than 4 words. ")},
+        {"role": "user", "content": content}
+    ]
+
+    response = query_agent(messages, CardList)
+    insert_into_anki(response, language, language)
+
+def insert_into_anki(cards, front_language, back_language):
+    for card in cards.cards:
+        front = card.front
+        back = card.back
         print(front+"\t"+back)
         front_audio_filename = tts_to_anki_media(front, front_language)
         back_audio_filename = tts_to_anki_media(back, back_language)
@@ -403,7 +466,7 @@ def create_flashcards(sentences_prompt):
 
     check_deck_exists(front_language)
 
-    raw = query_agent("gpt-4.1-mini", [{"role": "system", "content": sentences_prompt.format(t=topic, fl=front_language)}])
+    raw = query_agent([{"role": "system", "content": sentences_prompt.format(t=topic, fl=front_language)}])
     print(raw)
     if not ask_for_confirmation("Continue?"):
         exit(1)
@@ -420,15 +483,14 @@ def teach():
     topic = " ".join(args.topic).strip()
     sentences_prompt=[
         {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
-                                       "Provide a JSON object where each key is a question and each value is the answer, without any additional text or formatting. "
-                                       "Aim for brevity in the answer field. "},
+                                       "Provide a list of cards where the front is a question and the back is the answer. "
+                                       "Aim for brevity in the answer field- answers should be no more than 2-3 words. "},
         {"role": "user", "content": f"Generate flashcards in {lang} about: {topic}."}
     ]
 
     check_deck_exists(lang)
 
-    raw = query_agent("gpt-4.1-mini", sentences_prompt)
-    sentences = parse_json(raw)
+    sentences = query_agent(sentences_prompt, CardList)
     pprint(sentences)
     if not ask_for_confirmation("Continue?"):
         exit(1)
@@ -502,7 +564,7 @@ def create_flashcards_from_vocab_list():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["rw", "teach", "chat", "vocab", "vocabfile", "lecture"], help="Command to execute")
+    parser.add_argument("cmd", choices=["summarize", "rw", "teach", "chat", "debug", "vocab", "vocabfile", "lecture"], help="Command to execute")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -511,6 +573,8 @@ if __name__ == '__main__':
         rw()
     elif args.cmd == "teach":
         teach()
+    elif args.cmd == "debug":
+        debug()
     elif args.cmd == "chat":
         chat()
     elif args.cmd == "vocab":
@@ -519,3 +583,5 @@ if __name__ == '__main__':
         create_flashcards_from_vocab_list()
     elif args.cmd == "lecture":
         lecture()
+    elif args.cmd == "summarize":
+        summarize()

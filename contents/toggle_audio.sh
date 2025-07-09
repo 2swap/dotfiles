@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Define the output devices
+# Can be found with `pactl list short sinks`
 DEVICE1="alsa_output.usb-Blue_Microphones_Yeti_Stereo_Microphone_REV8-00.analog-stereo"
-DEVICE2="alsa_output.pci-0000_00_1b.0.analog-stereo"
-
+DEVICE2="alsa_output.pci-0000_00_1f.3.analog-stereo"
 
 # Get the current active sink (output device)
 current_sink=$(pactl get-default-sink)
