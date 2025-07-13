@@ -139,55 +139,6 @@ def get_lang(language):
     }
     return mapping.get(language.lower(), "en")
 
-# https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support?tabs=tts
-def azure_tts(text, path, language):
-    voice_dict = {
-        "de": ["de-DE-GiselaNeural"],
-        "hi": ["hi-IN-AnanyaNeural", "hi-IN-AartiNeural", "hi-IN-KavyaNeural", "hi-IN-SwaraNeural"],
-        "es": ["es-MX-DaliaNeural", "es-MX-BeatrizNeural", "es-MX-CandelaNeural", "es-MX-CarlotaNeural", "es-MX-LarissaNeural", "es-MX-MarinaNeural", "es-MX-NuriaNeural", "es-MX-RenataNeural"],
-        "id": ["id-ID-GadisNeural", "id-ID-ArdiNeural"],
-        "tr": ["tr-TR-EmelNeural", "tr-TR-AhmetNeural"],
-        "ja": ["ja-JP-NanamiNeural", "ja-JP-AoiNeural", "ja-JP-MayuNeural", "ja-JP-ShioriNeural"],
-        #"zh": ["zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural", "zh-CN-XiaochenNeural", "zh-CN-XiaochenMultilingualNeural4", "zh-CN-XiaohanNeural", "zh-CN-XiaomengNeural", "zh-CN-XiaomoNeural", "zh-CN-XiaoqiuNeural", "zh-CN-XiaorouNeural", "zh-CN-XiaoruiNeural", "zh-CN-XiaoshuangNeural", "zh-CN-XiaoxiaoDialectsNeural", "zh-CN-XiaoxiaoMultilingualNeural4", "zh-CN-XiaoyanNeural", "zh-CN-XiaoyouNeural", "zh-CN-XiaoyuMultilingualNeural4", "zh-CN-XiaozhenNeural"],
-        #"zh": ["zh-CN-Xiaochen:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", "zh-CN-Xiaoxiao2:DragonHDFlashLatestNeural"],
-        "zh": ["zh-CN-Xiaochen:DragonHDLatestNeural"],
-        "fil": ["fil-PH-BlessicaNeural", "fil-PH-AngeloNeural"],
-        "fr": ["fr-FR-DeniseNeural", "fr-FR-VivienneMultilingualNeural4", "fr-FR-BrigitteNeural", "fr-FR-CelesteNeural", "fr-FR-CoralieNeural", "fr-FR-EloiseNeural", "fr-FR-JacquelineNeural", "fr-FR-JosephineNeural", "fr-FR-YvetteNeural"],
-        "en": ["en-US-Phoebe:DragonHDLatestNeural"]
-    }
-    key = get_lang(language)
-    if key in voice_dict:
-        voice = random.choice(voice_dict[key])
-    else:
-        print("Azure language not supported!")
-        exit(1)
-    if "HD" in voice:
-        sleep(7)
-    sanitized_text = re.sub(r'[&<>"\']', ' ', re.sub(r'\s+', ' ', text))
-    ssml = f"""<speak version='1.0' xml:lang='en-US'>
-  <voice name='{voice}'>
-    {sanitized_text}
-  </voice>
-</speak>"""
-    tts_url = "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
-    headers = {
-        "Authorization": "Bearer " + get_azure_token(),
-        "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-48khz-192kbitrate-mono-mp3",
-        "User-Agent": "azureTTS"
-    }
-    response = requests.post(tts_url, headers=headers, data=ssml.encode('utf-8'))
-    if response.status_code == 200:
-        with open(path, "wb") as audio:
-            audio.write(response.content)
-    else:
-        try:
-            error_json = response.json()
-            error_message = error_json.get('error', response.text)
-        except Exception:
-            error_message = response.text
-            print(f"TTS request failed with status code {response.status_code}: {error_message}")
-
 def query_agent(messages, tf=None):
     try:
         response = client.responses.parse(
@@ -238,7 +189,13 @@ def short_random_id():
 def tts_to_anki_media(text, language):
     audio_filename = re.sub(r'[^a-zA-Z0-9]', '_', text).strip('_')[:30] + short_random_id() + ".mp3"
     audio_filepath = os.path.join(os.path.expanduser("~/anki_media"), audio_filename)
-    azure_tts(text, audio_filepath, language)
+    with client.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts",
+        voice="nova",
+        input=text,
+        instructions="Speak in a serious tone.",
+    ) as response:
+        response.stream_to_file(audio_filepath)
     return audio_filename
 
 def translate_items(texts, source_language, target_language):
@@ -484,7 +441,12 @@ def teach():
     sentences_prompt=[
         {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
                                        "Provide a list of cards where the front is a question and the back is the answer. "
-                                       "Aim for brevity in the answer field- answers should be no more than 2-3 words. "},
+                                       "The answer field should be brief- no longer than 5 words. "
+                                       "Questions should have a single correct answer. "
+                                       "'Give an example of a Coelomate' is a bad question since there is not a unique answer. "
+                                       "A better question would be: 'Are flatworms Coelomates, Pseudocoelomates, or Acoelomates? "
+                                       "Use the question field to give background or provide inspiration. Instead of 'What does GNU stand for?', "
+                                       "opt for 'GNU is an example of a recursive acronym. What does it stand for?' "},
         {"role": "user", "content": f"Generate flashcards in {lang} about: {topic}."}
     ]
 
