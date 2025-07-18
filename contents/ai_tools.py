@@ -130,15 +130,6 @@ def get_azure_token():
         azure_token = str(response.text)
     return azure_token
 
-def get_lang(language):
-    mapping = {
-        "english": "en", "french": "fr", "spanish": "es", "german": "de", "italian": "it",
-        "japanese": "ja", "chinese": "zh", "mandarin": "zh", "russian": "ru", "korean": "ko",
-        "portuguese": "pt", "hindi": "hi", "arabic": "ar", "indonesian": "id", "tagalog": "fil",
-        "filipino": "fil", "turkish": "tr"
-    }
-    return mapping.get(language.lower(), "en")
-
 def query_agent(messages, tf=None):
     try:
         response = client.responses.parse(
@@ -186,6 +177,16 @@ def short_random_id():
     chars = string.ascii_lowercase + string.digits
     return ''.join(random.choice(chars) for _ in range(8))
 
+def lang_tts_prompt(lang):
+    if lang.lower() == "indonesian":
+        return "Bicara dalam bahasa Indonesia."
+    if lang.lower() == "spanish":
+        return "Habla en español."
+    if lang.lower() == "japanese":
+        return "日本語で話してください。"
+    else:
+        return f"Speak in {lang}."
+
 def tts_to_anki_media(text, language):
     audio_filename = re.sub(r'[^a-zA-Z0-9]', '_', text).strip('_')[:30] + short_random_id() + ".mp3"
     audio_filepath = os.path.join(os.path.expanduser("~/anki_media"), audio_filename)
@@ -193,10 +194,25 @@ def tts_to_anki_media(text, language):
         model="gpt-4o-mini-tts",
         voice="nova",
         input=text,
-        instructions="Speak in a serious tone.",
+        instructions=lang_tts_prompt(language),
     ) as response:
         response.stream_to_file(audio_filepath)
     return audio_filename
+
+def tts_to_temp_file(text):
+    temp_audio_filepath = os.path.join(tempfile.gettempdir(), "temp_tts_" + short_random_id() + ".mp3")
+    with client.audio.speech.with_streaming_response.create(
+        model="gpt-4o-mini-tts",
+        voice="nova",
+        input=text,
+        instructions="Speak clearly and assertively in the appropriate language.",
+    ) as response:
+        response.stream_to_file(temp_audio_filepath)
+    print(f"Temporary audio file created at {temp_audio_filepath}")
+    return temp_audio_filepath
+
+def play_audio_file(audio_path):
+    subprocess.run(["ffplay", "-nodisp", "-autoexit", audio_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def translate_items(texts, source_language, target_language):
     messages = [
@@ -204,7 +220,7 @@ def translate_items(texts, source_language, target_language):
             f"You are a {source_language} to {target_language} translator of sentence lists. Provide the original sentences on the front and the translations on the back. ")},
         {"role": "user", "content": json.dumps(texts)}
     ]
-    raw = query_agent(messages, CardList)
+    return query_agent(messages, CardList)
 
 # ANSI color codes
 RED = "\033[91m"
@@ -260,7 +276,7 @@ def debug():
 
     print("Goodbye!")
 
-def chat():
+def chat(voice):
     instructions = {"role": "system", "content": (
         "You are a helpful chat assistant, specializing in pedagogy. "
     )}
@@ -280,6 +296,13 @@ def chat():
         response = query_agent([instructions] + conversation_history[-20:])
         print(f"{GREEN}{response}{RESET}\n")
         conversation_history.append({"role": "assistant", "content": response})
+
+        if voice:
+            try:
+                tts_audio_path = tts_to_temp_file(response)
+                play_audio_file(tts_audio_path)
+            except Exception as e:
+                print(f"Error playing TTS audio: {e}")
 
     print("Goodbye!")
 
@@ -526,7 +549,7 @@ def create_flashcards_from_vocab_list():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["summarize", "rw", "teach", "chat", "debug", "vocab", "vocabfile", "lecture"], help="Command to execute")
+    parser.add_argument("cmd", choices=["summarize", "rw", "teach", "chat", "debug", "vocab", "vocabfile", "lecture", "vchat"], help="Command to execute")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -538,7 +561,9 @@ if __name__ == '__main__':
     elif args.cmd == "debug":
         debug()
     elif args.cmd == "chat":
-        chat()
+        chat(False)
+    elif args.cmd == "vchat":
+        chat(True)
     elif args.cmd == "vocab":
         vocab()
     elif args.cmd == "vocabfile":
