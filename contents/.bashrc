@@ -27,3 +27,4 @@ alias listen='cd /run/media/2swap/primary/immersion-tools/watcher && ./watcher.p
 alias watcher='cd /run/media/2swap/primary/immersion-tools/watcher && ./watcher.py'
 neofetch
 export PYTHONHISTFILE=/dev/null
+alias mountprimary='mount -t nfs 192.168.1.11:/run/media/2swap/primary ~/mnt/primary'
