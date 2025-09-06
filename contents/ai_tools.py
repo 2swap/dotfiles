@@ -46,7 +46,6 @@ def check_deck_exists(deck_name):
         print(f"Deck '{deck_name}' created.")
 
 def read_file(input_file):
-    print(f"Reading file {input_file}")
     try:
         with open(input_file, 'r') as f:
             file_content = f.read()
@@ -55,10 +54,10 @@ def read_file(input_file):
         print(f"Error reading input file: {e}")
         sys.exit(1)
 
-def anki_add_note(deck, front, back, front_sound, back_sound):
+def anki_add_note(deck, front, back, front_sound, back_sound, model_name):
     notes = [{
         "deckName": deck,
-        "modelName": "BasicWithTTS",
+        "modelName": model_name,
         "fields": {
             "Front": front,
             "Back": back,
@@ -89,51 +88,14 @@ def parse_json(raw):
     return data
 
 def get_openai_key():
-    try:
-        home = Path.home()
-        with open(home/'openaikey', 'r') as keyFile:
-            openai_api_key = keyFile.readline().strip()
-    except Exception as e:
-        print(f"Error reading OpenAI API key: {e}")
-        sys.exit(1)
-
-    if not openai_api_key:
-        print("Error: OpenAI API key is missing.")
-        sys.exit(1)
-    return openai_api_key
-
-def get_azure_key():
-    try:
-        home = Path.home()
-        with open(home/'azurekey', 'r') as keyFile:
-            azure_api_key = keyFile.readline().strip()
-    except Exception as e:
-        print(f"Error reading OpenAI API key: {e}")
-        sys.exit(1)
-
-    if not azure_api_key:
-        print("Error: OpenAI API key is missing.")
-        sys.exit(1)
-    return azure_api_key
+    return read_file(Path.home() / 'openaikey').strip()
 
 client = OpenAI(api_key=get_openai_key())
-
-azure_token = 0 # Cache the token
-def get_azure_token():
-    global azure_token
-    if azure_token == 0:
-        fetch_token_url = 'https://eastus.api.cognitive.microsoft.com/sts/v1.0/issueToken'
-        headers = {
-            'Ocp-Apim-Subscription-Key': get_azure_key()
-        }
-        response = requests.post(fetch_token_url, headers=headers)
-        azure_token = str(response.text)
-    return azure_token
 
 def query_agent(messages, tf=None):
     try:
         response = client.responses.parse(
-            model="gpt-4.1-mini",
+            model="gpt-5-mini",
             input=messages,
             **({'text_format': tf} if tf else {})
         )
@@ -187,29 +149,24 @@ def lang_tts_prompt(lang):
     else:
         return f"Speak in {lang}."
 
+def generate_tts(text, instructions, audio_filepath):
+    try:
+        with client.audio.speech.with_streaming_response.create(
+            model="gpt-4o-mini-tts",
+            voice="nova",
+            input=text,
+            instructions=instructions
+        ) as response:
+            response.stream_to_file(audio_filepath)
+    except Exception as e:
+        print(f"Error generating TTS: {e}")
+
 def tts_to_anki_media(text, language):
     audio_filename = re.sub(r'[^a-zA-Z0-9]', '_', text).strip('_')[:30] + short_random_id() + ".mp3"
     audio_filepath = os.path.join(os.path.expanduser("~/anki_media"), audio_filename)
-    with client.audio.speech.with_streaming_response.create(
-        model="gpt-4o-mini-tts",
-        voice="nova",
-        input=text,
-        instructions=lang_tts_prompt(language),
-    ) as response:
-        response.stream_to_file(audio_filepath)
+    instructions = lang_tts_prompt(language)
+    generate_tts(text, instructions, audio_filepath)
     return audio_filename
-
-def tts_to_temp_file(text):
-    temp_audio_filepath = os.path.join(tempfile.gettempdir(), "temp_tts_" + short_random_id() + ".mp3")
-    with client.audio.speech.with_streaming_response.create(
-        model="gpt-4o-mini-tts",
-        voice="nova",
-        input=text,
-        instructions="Speak clearly and assertively in the appropriate language.",
-    ) as response:
-        response.stream_to_file(temp_audio_filepath)
-    print(f"Temporary audio file created at {temp_audio_filepath}")
-    return temp_audio_filepath
 
 def play_audio_file(audio_path):
     subprocess.run(["ffplay", "-nodisp", "-autoexit", audio_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -276,7 +233,7 @@ def debug():
 
     print("Goodbye!")
 
-def chat(voice):
+def chat():
     instructions = {"role": "system", "content": (
         "You are a helpful chat assistant, specializing in pedagogy. "
     )}
@@ -297,13 +254,6 @@ def chat(voice):
         print(f"{GREEN}{response}{RESET}\n")
         conversation_history.append({"role": "assistant", "content": response})
 
-        if voice:
-            try:
-                tts_audio_path = tts_to_temp_file(response)
-                play_audio_file(tts_audio_path)
-            except Exception as e:
-                print(f"Error playing TTS audio: {e}")
-
     print("Goodbye!")
 
 def rw():
@@ -312,13 +262,7 @@ def rw():
         sys.exit(1)
 
     input_file = sys.argv[1]
-    input_path = Path(input_file)
-    try:
-        with open(input_file, 'r') as f:
-            lines = f.readlines()
-    except Exception as e:
-        print(f"Error reading input file: {e}")
-        sys.exit(1)
+    lines = read_file(Path(input_file))
 
     start_indices = [i for i, line in enumerate(lines) if 'RW_'+'START' in line]
     end_indices = [i for i, line in enumerate(lines) if 'RW_'+'END' in line]
@@ -357,6 +301,11 @@ def rw():
     ]
 
     response = query_agent(messages)
+
+    # If the first or last line of the response conatains ` characters to represent code
+    if response.splitlines()[0].startswith('```') or response.splitlines()[-1].startswith('```'):
+        response = '\n'.join(response.splitlines()[1:-1]).strip()
+
 
     # Create temp files for meld and editing
     with tempfile.NamedTemporaryFile('w+', delete=False, encoding='utf-8') as temp_original:
@@ -398,16 +347,16 @@ def rw():
     else:
         print(f"Temporary files at {temp_original_path}, {temp_rewritten_path}")
 
-def insert_into_anki(cards, front_language, back_language):
+def insert_into_anki(cards, front_language, back_language, model_name):
     for card in cards.cards:
         front = card.front
         back = card.back
         print(front+"\t"+back)
         front_audio_filename = tts_to_anki_media(front, front_language)
         back_audio_filename = tts_to_anki_media(back, back_language)
-        anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename)
+        anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename, model_name)
 
-def create_flashcards(sentences_prompt):
+def create_flashcards(sentences_prompt, model_name):
     parser = argparse.ArgumentParser()
     parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
     parser.add_argument("-b", "--back-language", required=True, help="The language for the back of the flashcards.")
@@ -425,26 +374,32 @@ def create_flashcards(sentences_prompt):
         exit(1)
     translations = translate_items(raw, front_language, back_language)
     pprint(translations)
-    insert_into_anki(translations, front_language, back_language)
+    insert_into_anki(translations, front_language, back_language, model_name)
 
 def teach():
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--language", required=True, help="The language for the flashcards.")
+    parser.add_argument("-d", "--data", required=False, help="A file containing the information to teach.")
     parser.add_argument("topic", nargs="+")
     args = parser.parse_args()
     lang = args.language.strip().capitalize()
+    if args.data:
+        input_file = read_file(Path(args.data))
+
     topic = " ".join(args.topic).strip()
     sentences_prompt=[
         {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
                                        "Provide a list of cards where the front is a question and the back is the answer. "
-                                       "The answer field should be brief- no longer than 5 words. "
-                                       "Questions should have a single correct answer. "
+                                       "Questions should have a single correct answer which is easily checkable. A long justification is not a good answer since it is hard to check. "
                                        "'Give an example of a Coelomate' is a bad question since there is not a unique answer. "
-                                       "A better question would be: 'Are flatworms Coelomates, Pseudocoelomates, or Acoelomates? "
-                                       "Use the question field to give background or provide inspiration. Instead of 'What does GNU stand for?', "
-                                       "opt for 'GNU is an example of a recursive acronym. What does it stand for?' "},
-        {"role": "user", "content": f"Generate flashcards in {lang} about: {topic}."}
+                                       "Do not carelessly introduce any words without later explaining them or relating them to other concepts. "
+                                       "Include questions which require the user to synthesize information- asking for similarities, differences, relationships, and applications is ideal. "
+                                       "Finally, use the question field to give background or provide inspiration. Try to make the deck convey a coherent narrative. "},
     ]
+
+    if args.data:
+        sentences_prompt.append({"role": "user", "content": input_file})
+    sentences_prompt.append({"role": "user", "content": f"Generate flashcards in {lang} about {topic} using the above information."})
 
     check_deck_exists(lang)
 
@@ -452,57 +407,31 @@ def teach():
     pprint(sentences)
     if not ask_for_confirmation("Continue?"):
         exit(1)
-    insert_into_anki(sentences, lang, lang)
+    insert_into_anki(sentences, lang, lang, "BasicWithTTS")
+
+def vocab_easy():
+    sentences_prompt = (
+        "You are an assistant that generates very basic sentences in {fl}. "
+        "Use the following vocab words 2 times each: {t}. "
+        "You may change the conjugation or tense of the vocab words as needed to ensure the sentences are grammatical. "
+        "For example, if the vocab word were 'run', you might say 'I ran to the store.' "
+        "The strings should be very basic, for beginner language learners. "
+    )
+    create_flashcards(sentences_prompt, "ReadUnderstandTTS")
 
 def vocab():
     sentences_prompt = (
-        "You are an assistant that generates very short (5-11 word) trivia facts in {fl}. "
-        "Make a diverse JSON list of strings, and be sure to use the following vocab words 3 times each: {t}. "
-        "You may change the form of the vocab words as needed to ensure the sentences are grammatical. "
-        "For example, if the vocab word were 'brain', you might say 'Romans used mouse brains as toothpaste.' "
-        "Do not add any extra formatting or text. "
+        "You are an assistant that generates short trivia facts (5-10 words) in {fl}. "
+        "Make a diverse JSON list of strings, and be sure to use the following vocab words 2 times each: {t}. "
+        "You may change the conjugation or tense of the vocab words as needed to ensure the sentences are grammatical. "
+        "For example, if the vocab word were 'Oil', you might say 'The largest oil field is in Saudi Arabia.' "
+        "The strings should be factual, kid-friendly/simple to understand, and refer to specific historical events or scientific knowledge. "
     )
-    create_flashcards(sentences_prompt)
-
-def create_flashcards_from_vocab_list():
-    parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("filepath", help="File containing vocab entries")
-    parser.add_argument("rest", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
-
-    vocab_file_path = Path(args.filepath)
-    sys.argv = [sys.argv[0]] + args.rest + ["EmptyTopic"]
-
-    if not vocab_file_path.exists():
-        print(f"Vocab file {vocab_file_path} does not exist.")
-        sys.exit(1)
-
-    with open(vocab_file_path, 'r', encoding='utf-8') as f:
-        lines = [line.strip() for line in f if line.strip()]
-
-    words_to_use = lines[:2]
-    if not words_to_use:
-        print("No words found in vocab file.")
-        sys.exit(1)
-
-    # Prepare vocab string by joining words with commas or spaces
-    vocab_str = ", ".join(words_to_use)
-
-    sentences_prompt = (
-        "You are a helpful assistant that generates sentences for {fl} learners. Provide a JSON list of sentences (each 3 to 7 words). "
-        "The vocab in question is: " + vocab_str + ". Please create about 3 sentences, using these words a few times each. Avoid extra commentary or text."
-    )
-    create_flashcards(sentences_prompt)
-
-    # Remove the top word from the file
-    lines.pop(0)
-    with open(vocab_file_path, 'w', encoding='utf-8') as f:
-        for line in lines:
-            f.write(line + '\n')
+    create_flashcards(sentences_prompt, "BasicWithTTS")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["rw", "teach", "chat", "debug", "vocab", "vocabfile", "vchat"], help="Command to execute")
+    parser.add_argument("cmd", choices=["rw", "teach", "chat", "debug", "vocab", "vocab_easy"], help="The command to run")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -514,10 +443,8 @@ if __name__ == '__main__':
     elif args.cmd == "debug":
         debug()
     elif args.cmd == "chat":
-        chat(False)
-    elif args.cmd == "vchat":
-        chat(True)
+        chat()
+    elif args.cmd == "vocab_easy":
+        vocab_easy()
     elif args.cmd == "vocab":
         vocab()
-    elif args.cmd == "vocabfile":
-        create_flashcards_from_vocab_list()
