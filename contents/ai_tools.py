@@ -54,7 +54,7 @@ def read_file(input_file):
         print(f"Error reading input file: {e}")
         sys.exit(1)
 
-def anki_add_note(deck, front, back, front_sound, back_sound, model_name):
+def anki_add_note(deck, front, back, front_sound, back_sound, model_name="BasicWithTTS"):
     notes = [{
         "deckName": deck,
         "modelName": model_name,
@@ -194,27 +194,42 @@ RESET = "\033[0m"
 
 
 
-def debug():
+def chat():
     instructions = {"role": "system", "content": (
-        "You are a debug assistant. "
-        "To invoke a command, send a two-line reply. "
-        "On the first line, use this syntax: 'SHELL: `ls ~`'. "
-        "The command must be packed into one line, and the output will be provided to you for inspection. "
-        "On the second line, in one sentence, explain your command. "
-        "If no command is needed, simply respond in text. "
+        "You are a helpful chat assistant, specializing in pedagogy. "
     )}
+    debug_instr = {"role": "system", "content": (
+        "The user has requested debug assistance on their linux machine. "
+        "From now on, to invoke a command, use this sample syntax on the first line of your response: 'SHELL: `ls ~`'. "
+        "The command must be packed into the first line, and the output will be provided to you for inspection. "
+        "On subsequent lines, briefly explain the motivation behind the command. "
+        "If no command is needed, simply continue to respond in text. "
+    )}
+    anki_instr = (
+        "The user has requested anki cards covering this information. "
+        "The front of the card should provide all relevant context for a final question. "
+        "The question itself shouldask for a single fact, name, date, or datapoint so that the user's answer can easily be judged as right or wrong. "
+        "An example of a good card is as follows: "
+        "Front: 'Conway studied the endgame of Go, resulting in the development of Combinatorial Game Theory. What is the Japanese name for the endgame of Go?' "
+        "Back: 'Yose' "
+        "Please make the cards in the user's native language ({fl}). "
+    )
     conversation_history = []
 
     while True:
         user_input = input(f"{RED}> {RESET}").strip()
-        if user_input in ["wipe"]:
-            conversation_history = []
-            print(f"{GREEN}Wiped chat history.{RESET}\n")
-            continue
         if user_input in ["exit", "quit"]:
             break
 
-        conversation_history.append({"role": "user", "content": user_input})
+        if "[d]" in user_input:
+            conversation_history.append(debug_instr)
+        if "[a=" in user_input:
+            # Match substring like "[a=Spanish]"
+            regex = 
+            language = 
+            language = language.strip().capitalize()
+            conversation_history.append({"role": "system", "content": anki_instr.format(fl=language)})
+            create_flashcards(conversation_history, language, language)
 
         while True:
             response = query_agent([instructions] + conversation_history[-20:])
@@ -230,29 +245,6 @@ def debug():
                 conversation_history.append({"role": "system", "content": result_message})
             else:
                 break
-
-    print("Goodbye!")
-
-def chat():
-    instructions = {"role": "system", "content": (
-        "You are a helpful chat assistant, specializing in pedagogy. "
-    )}
-    conversation_history = []
-
-    while True:
-        user_input = input(f"{RED}> {RESET}").strip()
-        if user_input in ["wipe"]:
-            conversation_history = []
-            print(f"{GREEN}Wiped chat history.{RESET}\n")
-            continue
-        if user_input in ["exit", "quit"]:
-            break
-
-        conversation_history.append({"role": "user", "content": user_input})
-
-        response = query_agent([instructions] + conversation_history[-20:])
-        print(f"{GREEN}{response}{RESET}\n")
-        conversation_history.append({"role": "assistant", "content": response})
 
     print("Goodbye!")
 
@@ -347,104 +339,59 @@ def rw():
     else:
         print(f"Temporary files at {temp_original_path}, {temp_rewritten_path}")
 
-def insert_into_anki(cards, front_language, back_language, model_name):
+def insert_into_anki(cards, front_language, back_language):
     for card in cards.cards:
         front = card.front
         back = card.back
         print(front+"\t"+back)
         front_audio_filename = tts_to_anki_media(front, front_language)
         back_audio_filename = tts_to_anki_media(back, back_language)
-        anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename, model_name)
+        anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename)
 
-def create_flashcards(sentences_prompt, model_name):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
-    parser.add_argument("-b", "--back-language", required=True, help="The language for the back of the flashcards.")
-    parser.add_argument("topic", nargs="+")
-    args = parser.parse_args()
-    front_language = args.front_language.strip().capitalize()
-    back_language = args.back_language.strip().capitalize()
-    topic = " ".join(args.topic).strip()
-
+def create_flashcards(chat_history, front_language, back_language):
     check_deck_exists(front_language)
 
-    raw = query_agent([{"role": "system", "content": sentences_prompt.format(t=topic, fl=front_language)}])
+    raw = query_agent(chat_history)
     print(raw)
     if not ask_for_confirmation("Continue?"):
         exit(1)
     translations = translate_items(raw, front_language, back_language)
     pprint(translations)
-    insert_into_anki(translations, front_language, back_language, model_name)
+    insert_into_anki(translations, front_language, back_language)
 
-def teach():
+def vocab(front_language, back_language):
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--language", required=True, help="The language for the flashcards.")
-    parser.add_argument("-d", "--data", required=False, help="A file containing the information to teach.")
     parser.add_argument("topic", nargs="+")
     args = parser.parse_args()
-    lang = args.language.strip().capitalize()
-    if args.data:
-        input_file = read_file(Path(args.data))
-
     topic = " ".join(args.topic).strip()
-    sentences_prompt=[
-        {"role": "system", "content": f"You are a helpful assistant that generates flashcards in {lang}. "
-                                       "Provide a list of cards where the front is a question and the back is the answer. "
-                                       "Questions should have a single correct answer which is easily checkable. A long justification is not a good answer since it is hard to check. "
-                                       "'Give an example of a Coelomate' is a bad question since there is not a unique answer. "
-                                       "Do not carelessly introduce any words without later explaining them or relating them to other concepts. "
-                                       "Include questions which require the user to synthesize information- asking for similarities, differences, relationships, and applications is ideal. "
-                                       "Finally, use the question field to give background or provide inspiration. Try to make the deck convey a coherent narrative. "},
-    ]
-
-    if args.data:
-        sentences_prompt.append({"role": "user", "content": input_file})
-    sentences_prompt.append({"role": "user", "content": f"Generate flashcards in {lang} about {topic} using the above information."})
-
-    check_deck_exists(lang)
-
-    sentences = query_agent(sentences_prompt, CardList)
-    pprint(sentences)
-    if not ask_for_confirmation("Continue?"):
-        exit(1)
-    insert_into_anki(sentences, lang, lang, "BasicWithTTS")
-
-def vocab_easy():
-    sentences_prompt = (
-        "You are an assistant that generates very basic sentences in {fl}. "
-        "Use the following vocab words 2 times each: {t}. "
-        "You may change the conjugation or tense of the vocab words as needed to ensure the sentences are grammatical. "
-        "For example, if the vocab word were 'run', you might say 'I ran to the store.' "
-        "The strings should be very basic, for beginner language learners. "
-    )
-    create_flashcards(sentences_prompt, "ReadUnderstandTTS")
-
-def vocab():
-    sentences_prompt = (
+    instructions = (
         "You are an assistant that generates short trivia facts (5-10 words) in {fl}. "
         "Make a diverse JSON list of strings, and be sure to use the following vocab words 2 times each: {t}. "
         "You may change the conjugation or tense of the vocab words as needed to ensure the sentences are grammatical. "
         "For example, if the vocab word were 'Oil', you might say 'The largest oil field is in Saudi Arabia.' "
         "The strings should be factual, kid-friendly/simple to understand, and refer to specific historical events or scientific knowledge. "
     )
-    create_flashcards(sentences_prompt, "BasicWithTTS")
+
+    prompt = [{"role": "system", "content": instructions.format(t=topic, fl=front_language)}]
+
+    create_flashcards(prompt, front_language, back_language)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["rw", "teach", "chat", "debug", "vocab", "vocab_easy"], help="The command to run")
+    parser.add_argument("cmd", choices=["rw", "chat", "vocab"], help="The command to run")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
     sys.argv = [sys.argv[0]] + args.rest
     if args.cmd == "rw":
         rw()
-    elif args.cmd == "teach":
-        teach()
-    elif args.cmd == "debug":
-        debug()
     elif args.cmd == "chat":
         chat()
-    elif args.cmd == "vocab_easy":
-        vocab_easy()
     elif args.cmd == "vocab":
-        vocab()
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
+        parser.add_argument("-b", "--back-language", required=True, help="The language for the back of the flashcards.")
+        args = parser.parse_args()
+        front_language = args.front_language.strip().capitalize()
+        back_language = args.back_language.strip().capitalize()
+        vocab(front_language, back_language)
