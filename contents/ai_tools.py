@@ -17,6 +17,7 @@ import shutil
 from time import sleep
 import tempfile
 from pydantic import BaseModel
+import re
 
 class Card(BaseModel):
     front: str
@@ -197,6 +198,7 @@ RESET = "\033[0m"
 def chat():
     instructions = {"role": "system", "content": (
         "You are a helpful chat assistant, specializing in pedagogy. "
+        "Respond concisely in one or two paragraphs, but be sure to fully answer the user's question. "
     )}
     debug_instr = {"role": "system", "content": (
         "The user has requested debug assistance on their linux machine. "
@@ -206,9 +208,10 @@ def chat():
         "If no command is needed, simply continue to respond in text. "
     )}
     anki_instr = (
-        "The user has requested anki cards covering this information. "
+        "The user has requested 8 anki cards covering this information. "
+        "Focus the cards not on trivia such as dates, but instead the most critical contextual information about the topic. "
         "The front of the card should provide all relevant context for a final question. "
-        "The question itself shouldask for a single fact, name, date, or datapoint so that the user's answer can easily be judged as right or wrong. "
+        "The question itself should ask for a single word, place, fact, name, or datapoint so that the user's answer can easily be judged as right or wrong. "
         "An example of a good card is as follows: "
         "Front: 'Conway studied the endgame of Go, resulting in the development of Combinatorial Game Theory. What is the Japanese name for the endgame of Go?' "
         "Back: 'Yose' "
@@ -221,15 +224,35 @@ def chat():
         if user_input in ["exit", "quit"]:
             break
 
+        # enable debug mode
         if "[d]" in user_input:
             conversation_history.append(debug_instr)
+
+        # Add a file to the conversation
+        if "[f]" in user_input:
+            user_input = user_input.replace("[f]", "").strip()
+            if not os.path.isfile(user_input):
+                print(f"File '{user_input}' does not exist.")
+                continue
+            file_content = read_file(user_input)
+            conversation_history.append({"role": "system", "content": f"The user has provided the following file content from '{user_input}':\n```\n{file_content}\n```"})
+
+        # Anki cards
         if "[a=" in user_input:
             # Match substring like "[a=Spanish]"
-            regex = 
-            language = 
+            regex = r'\[a=([^\]]+)\]'
+            language = re.search(regex, user_input).group(1)
             language = language.strip().capitalize()
             conversation_history.append({"role": "system", "content": anki_instr.format(fl=language)})
-            create_flashcards(conversation_history, language, language)
+            check_deck_exists(language)
+            raw = query_agent(conversation_history, CardList)
+            pprint(raw)
+            if not ask_for_confirmation("Continue?"):
+                exit(1)
+            insert_into_anki(raw, language, language)
+            exit(0)
+        else:
+            conversation_history.append({"role": "user", "content": user_input})
 
         while True:
             response = query_agent([instructions] + conversation_history[-20:])
@@ -348,17 +371,6 @@ def insert_into_anki(cards, front_language, back_language):
         back_audio_filename = tts_to_anki_media(back, back_language)
         anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename)
 
-def create_flashcards(chat_history, front_language, back_language):
-    check_deck_exists(front_language)
-
-    raw = query_agent(chat_history)
-    print(raw)
-    if not ask_for_confirmation("Continue?"):
-        exit(1)
-    translations = translate_items(raw, front_language, back_language)
-    pprint(translations)
-    insert_into_anki(translations, front_language, back_language)
-
 def vocab(front_language, back_language):
     parser = argparse.ArgumentParser()
     parser.add_argument("topic", nargs="+")
@@ -374,7 +386,14 @@ def vocab(front_language, back_language):
 
     prompt = [{"role": "system", "content": instructions.format(t=topic, fl=front_language)}]
 
-    create_flashcards(prompt, front_language, back_language)
+    check_deck_exists(front_language)
+    raw = query_agent(prompt)
+    print(raw)
+    if not ask_for_confirmation("Continue?"):
+        exit(1)
+    translations = translate_items(raw, front_language, back_language)
+    pprint(translations)
+    insert_into_anki(translations, front_language, back_language)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
