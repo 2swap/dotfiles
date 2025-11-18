@@ -38,13 +38,17 @@ def anki_connect(action, params={}):
         return resp_json
     except requests.ConnectionError:
         print("AnkiConnect is not running. Please turn it on.")
-        exit(1)
 
 def check_deck_exists(deck_name):
-    decks = anki_connect("deckNames")["result"]
-    if not (deck_name in decks):
-        anki_connect("createDeck", {"deck": deck_name})
-        print(f"Deck '{deck_name}' created.")
+    try:
+        decks = anki_connect("deckNames")["result"]
+        if not (deck_name in decks):
+            anki_connect("createDeck", {"deck": deck_name})
+            print(f"Deck '{deck_name}' created.")
+        return True
+    except Exception as e:
+        print(f"Error checking/creating deck: {e}")
+        return False
 
 def read_file(input_file):
     try:
@@ -53,7 +57,6 @@ def read_file(input_file):
             return file_content
     except Exception as e:
         print(f"Error reading input file: {e}")
-        sys.exit(1)
 
 def anki_add_note(deck, front, back, front_sound, back_sound, model_name="BasicWithTTS"):
     notes = [{
@@ -229,13 +232,17 @@ def chat():
             conversation_history.append(debug_instr)
 
         # Add a file to the conversation
-        if "[f]" in user_input:
-            user_input = user_input.replace("[f]", "").strip()
-            if not os.path.isfile(user_input):
-                print(f"File '{user_input}' does not exist.")
+        if "[f=" in user_input:
+            # Match substring like "[f=path/to/file]"
+            regex = r'\[f=([^\]]+)\]'
+            path = re.search(regex, user_input).group(1).strip()
+            if not os.path.isfile(path):
+                print(f"File '{path}' does not exist.")
                 continue
-            file_content = read_file(user_input)
-            conversation_history.append({"role": "system", "content": f"The user has provided the following file content from '{user_input}':\n```\n{file_content}\n```"})
+            print(f"Adding file '{path}'...")
+            file_content = read_file(path)
+            conversation_history.append({"role": "system", "content": f"The user has provided the following file content from '{path}':\n```\n{file_content}\n```"})
+            continue
 
         # Anki cards
         if "[a=" in user_input:
@@ -243,16 +250,18 @@ def chat():
             regex = r'\[a=([^\]]+)\]'
             language = re.search(regex, user_input).group(1)
             language = language.strip().capitalize()
-            conversation_history.append({"role": "system", "content": anki_instr.format(fl=language)})
-            check_deck_exists(language)
-            raw = query_agent(conversation_history, CardList)
+            anki_history = conversation_history.copy()
+            anki_history.append({"role": "system", "content": anki_instr.format(fl=language)})
+            if not check_deck_exists(language):
+                continue
+            raw = query_agent(anki_history, CardList)
             pprint(raw)
             if not ask_for_confirmation("Continue?"):
                 exit(1)
             insert_into_anki(raw, language, language)
-            exit(0)
-        else:
-            conversation_history.append({"role": "user", "content": user_input})
+            continue
+
+        conversation_history.append({"role": "user", "content": user_input})
 
         while True:
             response = query_agent([instructions] + conversation_history[-20:])
@@ -371,18 +380,21 @@ def insert_into_anki(cards, front_language, back_language):
         back_audio_filename = tts_to_anki_media(back, back_language)
         anki_add_note(front_language, front, back, front_audio_filename, back_audio_filename)
 
-def vocab(front_language, back_language):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("topic", nargs="+")
-    args = parser.parse_args()
-    topic = " ".join(args.topic).strip()
+def vocab(front_language, back_language, topic, easy_mode):
     instructions = (
         "You are an assistant that generates short trivia facts (5-10 words) in {fl}. "
         "Make a diverse JSON list of strings, and be sure to use the following vocab words 2 times each: {t}. "
-        "You may change the conjugation or tense of the vocab words as needed to ensure the sentences are grammatical. "
+        "Each trivia fact should use at least one of the vocab words. "
+        "You may change the conjugation or tense of the vocab words so the sentences are grammatical. "
         "For example, if the vocab word were 'Oil', you might say 'The largest oil field is in Saudi Arabia.' "
         "The strings should be factual, kid-friendly/simple to understand, and refer to specific historical events or scientific knowledge. "
     )
+    if easy_mode:
+        instructions = (
+            "You are an assistant that generates very simple sentences (3-5 words) in {fl}. "
+            "Make a JSON list of strings, and be sure to use the following vocab words multiple times each: {t}. "
+            "Each sentence should use at least one of the vocab words. "
+        )
 
     prompt = [{"role": "system", "content": instructions.format(t=topic, fl=front_language)}]
 
@@ -397,7 +409,7 @@ def vocab(front_language, back_language):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Choose an entry point")
-    parser.add_argument("cmd", choices=["rw", "chat", "vocab"], help="The command to run")
+    parser.add_argument("cmd", choices=["rw", "chat", "vocab", "vocab_easy"], help="The command to run")
     parser.add_argument("rest", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -406,11 +418,14 @@ if __name__ == '__main__':
         rw()
     elif args.cmd == "chat":
         chat()
-    elif args.cmd == "vocab":
+    elif args.cmd == "vocab" or args.cmd == "vocab_easy":
+        easy_mode = args.cmd == "vocab_easy"
         parser = argparse.ArgumentParser()
         parser.add_argument("-f", "--front-language", required=True, help="The language for the front of the flashcards.")
         parser.add_argument("-b", "--back-language", required=True, help="The language for the back of the flashcards.")
+        parser.add_argument("topic", nargs="+")
         args = parser.parse_args()
         front_language = args.front_language.strip().capitalize()
         back_language = args.back_language.strip().capitalize()
-        vocab(front_language, back_language)
+        topic = " ".join(args.topic).strip()
+        vocab(front_language, back_language, topic, easy_mode)
