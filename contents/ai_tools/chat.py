@@ -5,7 +5,6 @@ from pprint import pprint
 import argparse
 import subprocess
 from openai_utils import query_agent, RED, GREEN, RESET
-from anki_utils import check_deck_exists, insert_into_anki, CardList
 import re
 from ask_for_confirmation import ask_for_confirmation
 
@@ -64,33 +63,6 @@ while True:
         print(f"Adding file '{path}'...")
         file_content = read_file(path)
         conversation_history.append({"role": "system", "content": f"The user has provided the following file content from '{path}':\n```\n{file_content}\n```"})
-        continue
-
-    # Anki cards
-    if "[a=" in user_input:
-        anki_instr = (
-            "The user has requested 8 anki cards covering this information. "
-            "Focus the cards not on trivia such as dates, but instead the most critical contextual information about the topic. "
-            "The front of the card should provide all relevant context for a final question. "
-            "The question itself should ask for a single word, place, fact, name, or datapoint so that the user's answer can easily be judged as right or wrong. "
-            "An example of a good card is as follows: "
-            "Front: 'Conway studied the endgame of Go, resulting in the development of Combinatorial Game Theory. What is the Japanese name for the endgame of Go?' "
-            "Back: 'Yose' "
-            "Please make the cards in the user's native language ({fl}). "
-        )
-        # Match substring like "[a=Spanish]"
-        regex = r'\[a=([^\]]+)\]'
-        language = re.search(regex, user_input).group(1)
-        language = language.strip().capitalize()
-        anki_history = conversation_history.copy()
-        anki_history.append({"role": "system", "content": anki_instr.format(fl=language)})
-        if not check_deck_exists(language):
-            continue
-        raw = query_agent(anki_history, text_format=CardList)
-        pprint(raw)
-        if not ask_for_confirmation("Continue?"):
-            exit(1)
-        insert_into_anki(raw, language, language)
         continue
 
     conversation_history.append({"role": "user", "content": user_input})

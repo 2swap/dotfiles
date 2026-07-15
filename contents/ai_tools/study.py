@@ -8,11 +8,8 @@ from ask_for_confirmation import ask_for_confirmation
 def generate_tech_cards(topic, language):
     instructions = (
         "You are a flash-card study assistant. "
-        "The user has requested 8 cards about {t} written in {lang}. "
-        "The question on the front should be closed-ended, and should provide an interesting bit of context for memorability. "
-        "For example, instead of asking 'What is the capital of Telangana?', "
-        "you might ask 'What is the capital of Telangana, which was split from Andhra Pradesh in 2014 following the Telangana movement?' "
-        "The answer should be concise and direct. "
+        "The user has requested cards about {t} written in {lang}. "
+        "Both the question on the front and question on the back should be as concise as possible. "
     )
     prompt = [{"role": "system", "content": instructions.format(t=topic, lang=language)}]
 

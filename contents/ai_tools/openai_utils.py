@@ -14,12 +14,13 @@ def get_openai_key():
 
 client = OpenAI(api_key=get_openai_key())
 
-def query_agent(messages, model="gpt-5-mini", text_format=None):
+def query_agent(messages, model="gpt-5.4-mini", text_format=None, reasoning=None):
     try:
         response = client.responses.parse(
             model=model,
             input=messages,
-            **({'text_format': text_format} if text_format else {})
+            **({'text_format': text_format} if text_format else {}),
+            **({'reasoning': reasoning} if reasoning else {})
         )
         return response.output_parsed if text_format else response.output_text
     except Exception as e:
@@ -39,7 +40,7 @@ def generate_tts(text, language, audio_filepath):
     try:
         with client.audio.speech.with_streaming_response.create(
             model="gpt-4o-mini-tts",
-            voice="nova",
+            voice="marin",
             input=text,
             instructions=lang_tts_prompt(language)
         ) as response:

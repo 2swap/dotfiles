@@ -5,7 +5,8 @@ import random
 import string
 from pydantic import BaseModel
 import json
-from openai_utils import query_agent, generate_tts
+from openai_utils import query_agent
+from tts import generate_tts
 
 class Card(BaseModel):
     front: str
@@ -15,18 +16,18 @@ class CardList(BaseModel):
     cards: list[Card]
 
 def anki_connect(action, params={}):
-    try:
-        if params is None:
-            params = []
-        request = json.dumps({"action": action, "version": 6, "params": params})
-        response = requests.post("http://localhost:8765", data=request)
-        resp_json = response.json()
-        if 'error' in resp_json and resp_json['error']:
-            print("Error: " + str(resp_json['error']))
-        return resp_json
-    except requests.ConnectionError:
-        print("AnkiConnect is not running. Please turn it on.")
-        exit(0)
+    if params is None:
+        params = []
+    request = json.dumps({"action": action, "version": 6, "params": params})
+    while True:
+        try:
+            response = requests.post("http://localhost:8765", data=request)
+            resp_json = response.json()
+            if 'error' in resp_json and resp_json['error']:
+                print("Error: " + str(resp_json['error']))
+            return resp_json
+        except requests.ConnectionError:
+            input("AnkiConnect is not running. Please start Anki (and AnkiConnect) and press Enter to retry...")
 
 def check_deck_exists(deck_name):
     decks = anki_connect("deckNames")["result"]
